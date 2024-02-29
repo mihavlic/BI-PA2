@@ -1,15 +1,18 @@
+#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <stdlib.h>
 
 class Array {
-    size_t size;
-    int* data;
+    size_t size = 0;
+    size_t capacity = 0;
+    int* data = nullptr;
 public:
     Array(size_t array_size)
     {
         size_t i;
         this->size = array_size;
+        this->capacity = array_size;
         this->data = new int[array_size];
         for (i = 0; i < this->size; ++i) {
             this->data[i] = i;
@@ -21,17 +24,24 @@ public:
         size_t old_size = this->size;
         size_t new_size = old_size + 1;
 
-        int* new_data = new int[new_size];
+        if (new_size > this->capacity) {
+            size_t new_capacity = this->capacity * 2;
+            if (new_size > new_capacity) {
+                new_capacity = new_size;
+            }
 
-        for (size_t i = 0; i < this->size; i++) {
-            new_data[i] = this->data[i];
-        }
-        new_data[old_size] = element;
-        
-        delete[] this->data;
+            int* new_data = new int[new_size];
+            for (size_t i = 0; i < this->size; i++) {
+                new_data[i] = this->data[i];
+            }
+            
+            delete[] this->data;
+            this->data = new_data;
+            this->capacity = new_capacity;
+        }        
 
-        this->data = new_data;
         this->size = new_size;
+        this->data[old_size] = element;
     }
 
     void print() const
