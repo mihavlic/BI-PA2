@@ -133,6 +133,26 @@ public:
         }
         std::cout << "     (" << m_size << " " << m_capacity << ")" << std::endl;
     }
+
+    size_t lower_bound(int val) {
+        int* first = m_data;
+        size_t count = size();
+        int* it;
+
+        while (count > 0) {
+            size_t step = count / 2;
+            it = first + step;
+
+            if (*it < val) {
+                first = ++it;
+                count -= step + 1;
+            } else {
+                count = step;
+            }
+        }
+
+        return first - m_data;
+    }
 };
 
 int main()
@@ -153,6 +173,15 @@ int main()
 
     arr.erase(1);
     arr.print();
+
+    arr.clear();
+    arr.push_back(1);
+    arr.push_back(2);
+    arr.push_back(8);
+    arr.push_back(9);
+    std::cout << arr.lower_bound(0) << std::endl;
+    std::cout << arr.lower_bound(2) << std::endl;
+    std::cout << arr.lower_bound(3) << std::endl;
 
     return 0;
 }
