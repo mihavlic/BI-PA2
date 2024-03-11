@@ -1,48 +1,18 @@
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-typedef struct {
-  void *allocation;
-  int size;
-  int capacity;
-} ArrayList;
-
-void list_push(ArrayList *list, void *element, int size) {
-  int new_size = list->size + size;
-  if (new_size > list->capacity) {
-    int new_capacity = list->capacity * 2;
-    if (new_capacity == 0) {
-      new_capacity = 8;
-    }
-    if (new_capacity < new_size) {
-      new_capacity = new_size;
-    }
-    list->capacity = new_capacity;
-    list->allocation = realloc(list->allocation, new_capacity);
-  }
-  memcpy((char *)list->allocation + list->size, element, size);
-  list->size = new_size;
-}
-
-void list_free(ArrayList *list) {
-  if (list->allocation) {
-    free(list->allocation);
-  }
-}
+#include <vector>
 
 typedef int NodeIndex;
 
-// AVL tree modified to use arena allocation and allow duplicate nodes
+// AVL tree modified to use arena allocation
 // https://www.geeksforgeeks.org/insertion-in-an-avl-tree/
 typedef struct {
   int key;
   NodeIndex left;
   NodeIndex right;
-  // the number of child nodecounts + refcount
-  int refcount;
-  int nodecount;
   int height;
 } Node;
 
@@ -50,20 +20,17 @@ void node_init(Node *node, int key) {
   node->key = key;
   node->left = -1;
   node->right = -1;
-  node->refcount = 1;
-  node->nodecount = 1;
   node->height = 1;
 }
 
-Node *get_node(NodeIndex index, ArrayList *arena) {
+Node *get_node(NodeIndex index, std::vector<Node> &arena) {
   if (index < 0) {
     return NULL;
   }
-  assert(index * sizeof(Node) < arena->size);
-  return ((Node *)arena->allocation) + index;
+  return &arena[index];
 }
 
-int node_get_height(NodeIndex index, ArrayList *arena) {
+int node_get_height(NodeIndex index, std::vector<Node> &arena) {
   Node *node = get_node(index, arena);
   if (node) {
     return node->height;
@@ -72,8 +39,7 @@ int node_get_height(NodeIndex index, ArrayList *arena) {
   }
 }
 
-// get balance factor of node
-int node_get_balance(NodeIndex index, ArrayList *arena) {
+int node_get_balance(NodeIndex index, std::vector<Node> &arena) {
   Node *node = get_node(index, arena);
   if (node) {
     int left_height = node_get_height(node->left, arena);
@@ -86,13 +52,9 @@ int node_get_balance(NodeIndex index, ArrayList *arena) {
 
 int max(int a, int b) { return (a > b) ? a : b; }
 
-void node_update_for_children(Node *node, ArrayList *arena) {
+void node_update_for_children(Node *node, std::vector<Node> &arena) {
   Node *left = get_node(node->left, arena);
   Node *right = get_node(node->right, arena);
-
-  int left_nodecount = left ? left->nodecount : 0;
-  int right_nodecount = right ? right->nodecount : 0;
-  node->nodecount = node->refcount + left_nodecount + right_nodecount;
 
   int left_height = left ? left->height : 0;
   int right_height = right ? right->height : 0;
@@ -110,7 +72,7 @@ void node_update_for_children(Node *node, ArrayList *arena) {
      z  T2       T1  z
 
 */
-NodeIndex node_rotate_left(NodeIndex y_index, ArrayList *arena) {
+NodeIndex node_rotate_left(NodeIndex y_index, std::vector<Node> &arena) {
   Node *y = get_node(y_index, arena);
   NodeIndex x_index = y->right;
 
@@ -137,7 +99,7 @@ NodeIndex node_rotate_left(NodeIndex y_index, ArrayList *arena) {
    T1  z               z  T2
 
 */
-NodeIndex node_rotate_right(NodeIndex y_index, ArrayList *arena) {
+NodeIndex node_rotate_right(NodeIndex y_index, std::vector<Node> &arena) {
   Node *y = get_node(y_index, arena);
   NodeIndex x_index = y->left;
 
@@ -153,18 +115,18 @@ NodeIndex node_rotate_right(NodeIndex y_index, ArrayList *arena) {
   return x_index;
 }
 
-NodeIndex push_node(int key, ArrayList *arena) {
+NodeIndex push_node(int key, std::vector<Node> &arena) {
   Node node;
   node_init(&node, key);
 
-  NodeIndex inserted_index = arena->size / sizeof(Node);
-  list_push(arena, &node, sizeof(Node));
+  NodeIndex inserted_index = arena.size();
+  arena.push_back(node);
 
   return inserted_index;
 }
 
 NodeIndex maybe_rebalance_node(Node *root, NodeIndex index, int key,
-                               ArrayList *arena) {
+                               std::vector<Node> &arena) {
   node_update_for_children(root, arena);
 
   int balance = node_get_balance(index, arena);
@@ -207,7 +169,7 @@ NodeIndex maybe_rebalance_node(Node *root, NodeIndex index, int key,
 
 // Recursive function to insert a key in the subtree rooted
 // with node and returns the new root of the subtree.
-NodeIndex insert_node(NodeIndex index, int key, ArrayList *arena) {
+NodeIndex insert_node(NodeIndex index, int key, std::vector<Node> &arena) {
   Node *root = get_node(index, arena);
 
   // if inserting into empty, create new node
@@ -226,9 +188,7 @@ NodeIndex insert_node(NodeIndex index, int key, ArrayList *arena) {
     root = get_node(index, arena);
     root->right = n;
   } else {
-    // the keys are equal, we can just increase the refcount
-    assert(root->nodecount > 0);
-    root->nodecount += 1;
+    root->key = key;
     return index;
   }
 
@@ -236,7 +196,7 @@ NodeIndex insert_node(NodeIndex index, int key, ArrayList *arena) {
   return maybe_rebalance_node(root, index, key, arena);
 }
 
-NodeIndex node_get_leftmost(NodeIndex node, ArrayList *arena) {
+NodeIndex node_get_leftmost(NodeIndex node, std::vector<Node> &arena) {
   NodeIndex current = node;
   Node *next = NULL;
   while ((next = get_node(current, arena))) {
@@ -245,12 +205,11 @@ NodeIndex node_get_leftmost(NodeIndex node, ArrayList *arena) {
   return current;
 }
 
-NodeIndex delete_node(NodeIndex index, int key, ArrayList *arena) {
+NodeIndex delete_node(NodeIndex index, int key, std::vector<Node> &arena) {
   Node *root = get_node(index, arena);
 
-  if (!root) {
-    assert(!"tree doesn't contain key");
-    return index;
+  if (root == NULL) {
+    return -1;
   }
 
   if (key < root->key) {
@@ -266,13 +225,6 @@ NodeIndex delete_node(NodeIndex index, int key, ArrayList *arena) {
   } else {
     Node *left_node = get_node(root->left, arena);
     Node *right_node = get_node(root->left, arena);
-
-    root->refcount -= 1;
-
-    // refcount decremented but not zero
-    if (root->refcount > 0) {
-      return index;
-    }
 
     if (!left_node && !right_node) { // no children
       return (NodeIndex)-1;
@@ -298,59 +250,30 @@ NodeIndex delete_node(NodeIndex index, int key, ArrayList *arena) {
   return maybe_rebalance_node(root, index, key, arena);
 }
 
-// Returns the nth element (zero-indexed) in tree
-// https://en.wikipedia.org/wiki/Order_statistic_tree#Augmented_search_tree_implementation
-NodeIndex tree_select(NodeIndex root, int nth, ArrayList *arena) {
-  NodeIndex index = root;
-  int i = nth;
-  while (true) {
-    Node *t = get_node(index, arena);
-    if (t == NULL) {
-      assert(!"huh");
+void node_print(NodeIndex index, std::vector<Node> &arena, int indent) {
+  Node *node = get_node(index, arena);
+  if (node) {
+    for (int i = 0; i < indent; i++) {
+      printf(" ");
     }
-
-    printf("nth:%d key:%d\n", i, t->key);
-
-    Node *l = get_node(t->left, arena);
-    int p = l ? l->nodecount : 0;
-    if (p == i) {
-      return index;
-    } else if (i < p) {
-      nth = i;
-      index = t->left;
-    } else {
-      nth = i - p;
-      index = t->right;
-    }
+    printf("%d\n", node->key);
+    node_print(node->left, arena, indent + 1);
+    node_print(node->right, arena, indent + 1);
   }
-}
-
-int find_median(NodeIndex index, ArrayList *arena) {
-  Node *root = get_node(index, arena);
-  if (root == NULL) {
-    return -1;
-  }
-  printf("nodecount:%d\n", root->nodecount);
-  NodeIndex found = tree_select(index, (root->nodecount - 1) / 2, arena);
-  return get_node(found, arena)->key;
 }
 
 int main() {
-  ArrayList arena = {};
+  std::vector<Node> arena{};
   NodeIndex root = -1;
 
-  int arr[] = {1, 1, 1};
-
-  for (int i = 0; i < sizeof(arr) / sizeof(int); i++) {
-    printf("%d ", arr[i]);
-    root = insert_node(root, arr[i], &arena);
+  for (int i = 0; i < 64; i++) {
+    int value = (i * i + ~i) % 64;
+    printf("%d ", value);
+    root = insert_node(root, value, arena);
   }
   printf("\n");
 
-  int median = find_median(root, &arena);
+  node_print(root, arena, 0);
 
-  printf("Median: %d\n", median);
-
-  list_free(&arena);
   return 0;
 }
