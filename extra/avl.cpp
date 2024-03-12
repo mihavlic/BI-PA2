@@ -1,293 +1,226 @@
-#include <cassert>
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <vector>
 
 typedef int NodeIndex;
 
+template <typename T> class Box {
+  T *ptr;
+
+public:
+  Box() : ptr(nullptr) {}
+  Box(T value) : ptr(new T(value)) {}
+  ~Box() {
+    if (this->ptr) {
+      delete this->ptr;
+    }
+  }
+  T *get() { return this->ptr; }
+};
+
 // AVL tree modified to use arena allocation
 // https://www.geeksforgeeks.org/insertion-in-an-avl-tree/
-typedef struct {
+struct Node {
   int key;
-  NodeIndex left;
-  NodeIndex right;
-  int height;
-} Node;
+  Node *left = nullptr;
+  Node *right = nullptr;
+  int height = 1;
 
-void node_init(Node *node, int key) {
-  node->key = key;
-  node->left = -1;
-  node->right = -1;
-  node->height = 1;
-}
-
-Node *get_node(NodeIndex index, std::vector<Node> &arena) {
-  if (index < 0) {
-    return NULL;
+  Node(int key_) : key(key_) {}
+  ~Node() {
+    if (left) {
+      delete left;
+    }
+    if (right) {
+      delete right;
+    }
   }
-  return &arena[index];
-}
-
-int node_get_height(NodeIndex index, std::vector<Node> &arena) {
-  Node *node = get_node(index, arena);
-  if (node) {
-    return node->height;
-  } else {
-    return 0;
-  }
-}
-
-int node_get_balance(NodeIndex index, std::vector<Node> &arena) {
-  Node *node = get_node(index, arena);
-  if (node) {
-    int left_height = node_get_height(node->left, arena);
-    int right_height = node_get_height(node->right, arena);
+  int get_balance() const {
+    int left_height = left ? left->height : 0;
+    int right_height = left ? left->height : 0;
     return left_height - right_height;
-  } else {
-    return 0;
   }
-}
+  void update_height() {
+    int left_height = left ? left->height : 0;
+    int right_height = right ? right->height : 0;
+    height = std::max(left_height, right_height) + 1;
+  }
+  /*
 
-int max(int a, int b) { return (a > b) ? a : b; }
-
-void node_update_height(Node *node, std::vector<Node> &arena) {
-  Node *left = get_node(node->left, arena);
-  Node *right = get_node(node->right, arena);
-
-  int left_height = left ? left->height : 0;
-  int right_height = right ? right->height : 0;
-  node->height = max(left_height, right_height) + 1;
-}
-
-/*
-
-  left rotate subtree rooted with y
-
-     y               x
-    / \             / \
-   T1  x    -->    y  T2
-      / \         / \
-     z  T2       T1  z
-
-*/
-NodeIndex node_rotate_left(NodeIndex y_index, std::vector<Node> &arena) {
-  Node *y = get_node(y_index, arena);
-  NodeIndex x_index = y->right;
-
-  Node *x = get_node(x_index, arena);
-  NodeIndex z_index = x->left;
-
-  x->left = y_index;
-  y->right = z_index;
-
-  node_update_height(y, arena);
-  node_update_height(x, arena);
-
-  return x_index;
-}
-
-/*
-
-  right rotate subtree rooted with y
+    left rotate subtree rooted with y
 
        y               x
       / \             / \
-     x  T2    -->    T1  y
-    / \                 / \
-   T1  z               z  T2
+     T1  x    -->    y  T2
+        / \         / \
+       z  T2       T1  z
 
-*/
-NodeIndex node_rotate_right(NodeIndex y_index, std::vector<Node> &arena) {
-  Node *y = get_node(y_index, arena);
-  NodeIndex x_index = y->left;
+  */
+  static void node_rotate_left(Node **node) {
+    Node *y = *node;
+    Node *x = y->right;
+    Node *z = x->left;
 
-  Node *x = get_node(x_index, arena);
-  NodeIndex z_index = x->right;
+    x->left = y;
+    y->right = z;
 
-  x->right = y_index;
-  y->left = z_index;
+    y->update_height();
+    x->update_height();
 
-  node_update_height(y, arena);
-  node_update_height(x, arena);
-
-  return x_index;
-}
-
-NodeIndex push_node(int key, std::vector<Node> &arena) {
-  Node node;
-  node_init(&node, key);
-
-  NodeIndex inserted_index = arena.size();
-  arena.push_back(node);
-
-  return inserted_index;
-}
-
-NodeIndex maybe_rebalance_node(Node *root, NodeIndex index,
-                               std::vector<Node> &arena) {
-  node_update_height(root, arena);
-
-  int balance = node_get_balance(index, arena);
-
-  // left heavy
-  if (balance > 1) {
-    if (node_get_balance(root->left, arena) == -1) {
-      NodeIndex n = node_rotate_left(root->left, arena);
-
-      // root possibly invalidated
-      root = get_node(index, arena);
-      root->left = n;
-    }
-
-    return node_rotate_right(index, arena);
+    *node = x;
   }
+  /*
 
-  // right heavy
-  if (balance < -1) {
-    if (node_get_balance(root->right, arena) == 1) {
-      NodeIndex n = node_rotate_right(root->right, arena);
+    right rotate subtree rooted with y
 
-      // root possibly invalidated
-      root = get_node(index, arena);
-      root->right = n;
-    }
+         y               x
+        / \             / \
+       x  T2    -->    T1  y
+      / \                 / \
+     T1  z               z  T2
 
-    return node_rotate_left(index, arena);
+  */
+  static void node_rotate_right(Node **node) {
+    Node *y = *node;
+    Node *x = y->left;
+    Node *z = x->right;
+
+    x->right = y;
+    y->left = z;
+
+    y->update_height();
+    x->update_height();
+
+    *node = x;
   }
+  static void maybe_rebalance_node(Node **node) {
+    Node *root = *node;
 
-  // height is otherwise updated when rotating
-  node_update_height(root, arena);
-  return index;
-}
+    root->update_height();
+    int balance = root->get_balance();
 
-// Recursive function to insert a key in the subtree rooted
-// with node and returns the new root of the subtree.
-NodeIndex insert_node(NodeIndex index, int key, std::vector<Node> &arena) {
-  Node *root = get_node(index, arena);
+    if (balance > 1) { // left heavy
+      if (root->left->get_balance() == -1) {
+        node_rotate_left(&root->left);
+      }
 
-  // if inserting into empty, create new node
-  if (root == NULL) {
-    return push_node(key, arena);
-  }
+      node_rotate_right(node);
+    } else if (balance < -1) { // right heavy
+      if (root->right->get_balance() == 1) {
+        node_rotate_right(&root->right);
+      }
 
-  if (key < root->key) {
-    NodeIndex n = insert_node(root->left, key, arena);
-    // need to lookup the root gain, in case the root got resized
-    root = get_node(index, arena);
-    root->left = n;
-  } else if (key > root->key) {
-    NodeIndex n = insert_node(root->right, key, arena);
-    // need to lookup the root gain, in case the root got resized
-    root = get_node(index, arena);
-    root->right = n;
-  } else {
-    root->key = key;
-    return index;
-  }
-
-  // we've inserted a node into one of our children, rebalance
-  return maybe_rebalance_node(root, index, arena);
-}
-
-NodeIndex node_get_leftmost(NodeIndex index, std::vector<Node> &arena) {
-  NodeIndex prev = -1;
-  NodeIndex next = index;
-  while (Node *node = get_node(next, arena)) {
-    prev = next;
-    next = node->left;
-  }
-  return prev;
-}
-
-NodeIndex delete_node(NodeIndex index, int key, std::vector<Node> &arena) {
-  Node *root = get_node(index, arena);
-
-  if (root == NULL) {
-    return -1;
-  }
-
-  if (key < root->key) {
-    NodeIndex n = delete_node(root->left, key, arena);
-    // root possibly invalidated
-    root = get_node(index, arena);
-    root->left = n;
-  } else if (key > root->key) {
-    NodeIndex n = delete_node(root->right, key, arena);
-    // root possibly invalidated
-    root = get_node(index, arena);
-    root->right = n;
-  } else {
-    NodeIndex has_left = root->left >= 0;
-    NodeIndex has_right = root->right >= 0;
-
-    if (!has_left && !has_right) { // no children
-      return -1;
-    } else if (!has_right) { // only left
-      return root->left;
-    } else if (!has_left) { // only right
-      return root->right;
-    } else { // both children
-      // get the inorder successor (smallest in the right subtree)
-      NodeIndex leftmost_index = node_get_leftmost(root->right, arena);
-      Node *leftmost = get_node(leftmost_index, arena);
-      // reparent the leftmost into root
-      root->key = leftmost->key;
-      // this is a bit inelegant
-      NodeIndex n = delete_node(root->right, leftmost->key, arena);
-      // root possibly invalidated
-      root = get_node(index, arena);
-      root->right = n;
+      node_rotate_left(node);
     }
   }
+  // Recursive function to insert a key in the subtree rooted
+  // with node and returns the new root of the subtree.
+  static void insert_node(Node **node, int key) {
+    Node *root = *node;
 
-  // we've removed one of our children, rebalance
-  return maybe_rebalance_node(root, index, arena);
-}
-
-void node_print(NodeIndex index, std::vector<Node> &arena, int indent) {
-  Node *node = get_node(index, arena);
-  if (node) {
-    for (int i = 0; i < indent; i++) {
-      printf(" ");
+    // if inserting into empty, create new node
+    if (root == NULL) {
+      *node = new Node(key);
     }
-    printf("%d\n", node->key);
-    node_print(node->left, arena, indent + 1);
-    node_print(node->right, arena, indent + 1);
-  }
-}
 
-void node_print_order(NodeIndex index, std::vector<Node> &arena, int indent) {
-  Node *node = get_node(index, arena);
-  if (node) {
-    node_print_order(node->left, arena, indent + 1);
-    printf("%d ", node->key);
-    node_print_order(node->right, arena, indent + 1);
+    if (key < root->key) {
+      insert_node(&root->left, key);
+    } else if (key > root->key) {
+      insert_node(&root->right, key);
+    } else {
+      root->key = key;
+      return;
+    }
+
+    // we've inserted a node into one of our children, rebalance
+    maybe_rebalance_node(node);
   }
-  if (indent == 0) {
-    printf("\n");
+  Node *node_get_leftmost() {
+    Node *prev = nullptr;
+    Node *next = this;
+    while (next) {
+      prev = next;
+      next = next->left;
+    }
+    return prev;
   }
-}
+  static void delete_node(Node **node, int key) {
+    Node *root = *node;
+
+    if (root == NULL) {
+      return;
+    }
+
+    if (key < root->key) {
+      delete_node(&root->left, key);
+    } else if (key > root->key) {
+      delete_node(&root->right, key);
+    } else {
+      if (!root->left && !root->right) { // no children
+        *node = nullptr;
+      } else if (!root->left) { // only left
+        *node = root->right;
+        return;
+      } else if (!root->right) { // only right
+        *node = root->left;
+        return;
+      } else { // both children
+        // get the inorder successor (smallest in the right subtree)
+        Node *leftmost = root->node_get_leftmost();
+        // reparent the leftmost into root
+        root->key = leftmost->key;
+        // this is a bit inelegant
+        delete_node(&root->right, leftmost->key);
+      }
+    }
+
+    // we've removed one of our children, rebalance
+    return maybe_rebalance_node(node);
+  }
+  void print() const { _node_print(this, 0); }
+  static void _node_print(const Node *node, int indent) {
+    if (node) {
+      for (int i = 0; i < indent; i++) {
+        printf(" ");
+      }
+      printf("%d\n", node->key);
+      _node_print(node->left, indent + 1);
+      _node_print(node->right, indent + 1);
+    }
+  }
+  void print_order() const { _node_print_order(this, 0); }
+  static void _node_print_order(const Node *node, int indent) {
+    if (node) {
+      _node_print_order(node->left, indent + 1);
+      printf("%d ", node->key);
+      _node_print_order(node->right, indent + 1);
+    }
+    if (indent == 0) {
+      printf("\n");
+    }
+  }
+};
 
 int main() {
-  std::vector<Node> arena{};
-  NodeIndex root = -1;
+  Node *root = nullptr;
 
   for (int i = 0; i < 64; i++) {
     int value = (i * i + ~i) % 64;
-    root = insert_node(root, value, arena);
+    Node::insert_node(&root, value);
   }
 
-  node_print_order(root, arena, 0);
+  root->print_order();
 
   for (int i = 0; i < 64; i++) {
     int value = (i * i + ~i) % 64;
-    root = delete_node(root, value, arena);
+    Node::delete_node(&root, value);
   }
 
   printf("\n");
-  node_print_order(root, arena, 0);
+  root->print_order();
 
+  delete root;
   return 0;
 }
