@@ -39,7 +39,7 @@ struct Node {
   }
   int get_balance() const {
     int left_height = left ? left->height : 0;
-    int right_height = left ? left->height : 0;
+    int right_height = right ? right->height : 0;
     return left_height - right_height;
   }
   void update_height() {
@@ -123,6 +123,7 @@ struct Node {
     // if inserting into empty, create new node
     if (root == NULL) {
       *node = new Node(key);
+      return;
     }
 
     if (key < root->key) {
@@ -158,28 +159,27 @@ struct Node {
     } else if (key > root->key) {
       delete_node(&root->right, key);
     } else {
-      if (!root->left && !root->right) { // no children
-        *node = nullptr;
-      } else if (!root->left) { // only left
-        *node = root->right;
-        return;
-      } else if (!root->right) { // only right
-        *node = root->left;
-        return;
-      } else { // both children
+      if (root->left && root->right) {
         // get the inorder successor (smallest in the right subtree)
-        Node *leftmost = root->node_get_leftmost();
-        // reparent the leftmost into root
+        Node *leftmost = root->right->node_get_leftmost();
+        // leftmost is now root
         root->key = leftmost->key;
-        // this is a bit inelegant
+        // delete the old leftmost, this is a bit inelegant
         delete_node(&root->right, leftmost->key);
+      } else {
+        *node = root->left ? root->left : root->right;
+        delete root;
+        return;
       }
     }
 
     // we've removed one of our children, rebalance
-    return maybe_rebalance_node(node);
+    maybe_rebalance_node(node);
   }
   void print() const { _node_print(this, 0); }
+  void print_order() const { _node_print_order(this, 0); }
+
+private:
   static void _node_print(const Node *node, int indent) {
     if (node) {
       for (int i = 0; i < indent; i++) {
@@ -190,7 +190,6 @@ struct Node {
       _node_print(node->right, indent + 1);
     }
   }
-  void print_order() const { _node_print_order(this, 0); }
   static void _node_print_order(const Node *node, int indent) {
     if (node) {
       _node_print_order(node->left, indent + 1);
@@ -203,22 +202,24 @@ struct Node {
   }
 };
 
+int make_value(int i) { return (i * i * 127 + ~i) % 64; }
+
 int main() {
   Node *root = nullptr;
 
-  for (int i = 0; i < 64; i++) {
-    int value = (i * i + ~i) % 64;
+  int len = 4;
+  for (int i = 0; i < len; i++) {
+    int value = make_value(i);
     Node::insert_node(&root, value);
   }
 
   root->print_order();
 
-  for (int i = 0; i < 64; i++) {
-    int value = (i * i + ~i) % 64;
+  for (int i = 0; i < len; i++) {
+    int value = make_value(i);
     Node::delete_node(&root, value);
   }
 
-  printf("\n");
   root->print_order();
 
   delete root;
