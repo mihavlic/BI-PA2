@@ -4,22 +4,6 @@
 #include <cstdlib>
 #include <cstring>
 
-typedef int NodeIndex;
-
-template <typename T> class Box {
-  T *ptr;
-
-public:
-  Box() : ptr(nullptr) {}
-  Box(T value) : ptr(new T(value)) {}
-  ~Box() {
-    if (this->ptr) {
-      delete this->ptr;
-    }
-  }
-  T *get() { return this->ptr; }
-};
-
 // AVL tree modified to use arena allocation
 // https://www.geeksforgeeks.org/insertion-in-an-avl-tree/
 struct Node {
