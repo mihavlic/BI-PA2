@@ -1,0 +1,20 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"command": "testprog",
+			"args": [
+				"build",
+				"${relativeFile}",
+				"--options",
+				" -Wuninitialized -Wmaybe-uninitialized -Wextra -g -ftrapv -fsanitize=address"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "testprog build"
+		}
+	]
+}
