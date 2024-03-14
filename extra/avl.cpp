@@ -4,15 +4,17 @@
 #include <cstdlib>
 #include <cstring>
 
+template <typename T> using KeyOrdering = int(T *, T *);
+
 // AVL tree modified to use arena allocation
 // https://www.geeksforgeeks.org/insertion-in-an-avl-tree/
-struct Node {
-  int key;
+template <typename T> struct Node {
+  T key;
   Node *left = nullptr;
   Node *right = nullptr;
   int height = 1;
 
-  Node(int key_) : key(key_) {}
+  Node(T key_) : key(key_) {}
   ~Node() {
     if (left) {
       delete left;
@@ -101,8 +103,8 @@ struct Node {
   }
   // Recursive function to insert a key in the subtree rooted
   // with node and returns the new root of the subtree.
-  static void insert_node(Node **node, int key) {
-    Node *root = *node;
+  static void insert_node(Node<T> **node, T key, KeyOrdering<T> compare) {
+    Node<T> *root = *node;
 
     // if inserting into empty, create new node
     if (root == NULL) {
@@ -110,10 +112,11 @@ struct Node {
       return;
     }
 
-    if (key < root->key) {
-      insert_node(&root->left, key);
-    } else if (key > root->key) {
-      insert_node(&root->right, key);
+    int ordering = compare(&key, &root->key);
+    if (ordering < 0) {
+      insert_node(&root->left, key, compare);
+    } else if (ordering > 0) {
+      insert_node(&root->right, key, compare);
     } else {
       root->key = key;
       return;
@@ -131,17 +134,18 @@ struct Node {
     }
     return prev;
   }
-  static void delete_node(Node **node, int key) {
+  static void delete_node(Node **node, int key, KeyOrdering<T> compare) {
     Node *root = *node;
 
     if (root == NULL) {
       return;
     }
 
-    if (key < root->key) {
-      delete_node(&root->left, key);
-    } else if (key > root->key) {
-      delete_node(&root->right, key);
+    int ordering = compare(&key, &root->key);
+    if (ordering < 0) {
+      delete_node(&root->left, key, compare);
+    } else if (ordering > 0) {
+      delete_node(&root->right, key, compare);
     } else {
       if (root->left && root->right) {
         // get the inorder successor (smallest in the right subtree)
@@ -149,9 +153,15 @@ struct Node {
         // leftmost is now root
         root->key = leftmost->key;
         // delete the old leftmost, this is a bit inelegant
-        delete_node(&root->right, leftmost->key);
+        delete_node(&root->right, leftmost->key, compare);
       } else {
-        *node = root->left ? root->left : root->right;
+        if (root->left) {
+          *node = root->left;
+          root->left = nullptr;
+        } else {
+          *node = root->right;
+          root->right = nullptr;
+        }
         delete root;
         return;
       }
@@ -160,10 +170,6 @@ struct Node {
     // we've removed one of our children, rebalance
     maybe_rebalance_node(node);
   }
-  void print() const { _node_print(this, 0); }
-  void print_order() const { _node_print_order(this, 0); }
-
-private:
   static void _node_print(const Node *node, int indent) {
     if (node) {
       for (int i = 0; i < indent; i++) {
@@ -186,26 +192,43 @@ private:
   }
 };
 
+template <typename T> class AvlTree {
+  Node<T> *root;
+  KeyOrdering<T> *compare;
+
+public:
+  AvlTree(KeyOrdering<T> compare_) : root(nullptr), compare(compare_) {}
+  ~AvlTree() {
+    if (root) {
+      delete root;
+    }
+  }
+
+  void insert(T key) { Node<T>::insert_node(&this->root, key, this->compare); }
+  void remove(T key) { Node<T>::delete_node(&this->root, key, this->compare); }
+  void print() const { _node_print(root, 0); }
+  void print_order() const { Node<T>::_node_print_order(root, 0); }
+};
+
 int make_value(int i) { return (i * i * 127 + ~i) % 64; }
 
 int main() {
-  Node *root = nullptr;
+  auto compare = [](int *a, int *b) -> int { return *a - *b; };
+  AvlTree<int> root(compare);
 
   int len = 4;
   for (int i = 0; i < len; i++) {
     int value = make_value(i);
-    Node::insert_node(&root, value);
+    root.insert(value);
   }
 
-  root->print_order();
+  root.print_order();
 
   for (int i = 0; i < len; i++) {
     int value = make_value(i);
-    Node::delete_node(&root, value);
+    root.remove(value);
   }
 
-  root->print_order();
-
-  delete root;
+  root.print_order();
   return 0;
 }
