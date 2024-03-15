@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 template <typename T> using KeyOrdering = int(T *, T *);
 
@@ -208,6 +209,38 @@ public:
   void remove(T key) { Node<T>::delete_node(&this->root, key, this->compare); }
   void print() const { _node_print(root, 0); }
   void print_order() const { Node<T>::_node_print_order(root, 0); }
+};
+
+// stolen from
+// https://www.geeksforgeeks.org/binary-tree-iterator-for-inorder-traversal/
+template <typename T> class AvlIterator {
+private:
+  std::vector<Node<T> *> stack;
+
+public:
+  AvlIterator(Node<T> *root) { moveLeft(root); }
+
+  void moveLeft(Node<T> *current) {
+    while (current) {
+      stack.push_back(current);
+      current = current->left;
+    }
+  }
+  bool atEnd() const { return stack.empty(); }
+  Node<T> *next() {
+    if (atEnd()) {
+      return nullptr;
+    }
+
+    Node<T> &current = stack.back();
+    stack.pop_back();
+
+    if (current.right) {
+      moveLeft(current.right);
+    }
+
+    return current;
+  }
 };
 
 int make_value(int i) { return (i * i * 127 + ~i) % 64; }
