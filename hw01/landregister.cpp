@@ -15,7 +15,133 @@
 #include <vector>
 #endif /* __PROGTEST__ */
 
+struct BinarySearch {
+  size_t index;
+  bool found;
+};
+
+// essentially std::lower_bound, stolen from
+// https://doc.rust-lang.org/src/core/slice/mod.rs.html#2825-2827
+template <typename T>
+BinarySearch binary_search_by(T *self, size_t len,
+                              std::function<int(const T &)> order) {
+  size_t size = len;
+  size_t left = 0;
+  size_t right = size;
+
+  while (left < right) {
+    size_t mid = left + size / 2;
+    size_t cmp = order(self[mid]);
+
+    if (cmp < 0) {
+      left = mid + 1;
+    } else if (cmp > 0) {
+      right = mid;
+    } else {
+      return BinarySearch{mid, true};
+    }
+
+    size = right - left;
+  }
+
+  return BinarySearch{left, false};
+}
+
+template <typename T>
+BinarySearch binary_search_by(std::vector<T> &vector,
+                              std::function<int(const T &)> order) {
+  return binary_search_by(vector.data(), vector.size(), order);
+}
+
+struct IndexRange {
+  size_t start;
+  size_t end;
+};
+
+template <typename T> class TrashSet {
+  std::vector<T> m_data;
+  int (*m_order)(const T &, const T &);
+
+public:
+  TrashSet()
+      : m_order([](T &a, T &b) {
+          if (a < b) {
+            return -1;
+          } else if (a > b) {
+            return 1;
+          } else {
+            return 0;
+          }
+        }) {}
+  TrashSet(int (*order)(const T &, const T &)) : m_order(order) {}
+  BinarySearch find(T &value) {
+    return binary_search_by(m_data, [&value, this](const T &element) -> int {
+      return m_order(element, value);
+    });
+  }
+  bool insert(T value) {
+    BinarySearch position = find(value);
+
+    if (position.found) {
+      m_data[position.index] = value;
+      return false;
+    } else {
+      m_data.insert(m_data.begin() + position.index, value);
+      return true;
+    }
+  }
+  bool remove(T value) {
+    BinarySearch position = find(value);
+
+    if (position.found) {
+      m_data.erase(position.index);
+      return true;
+    } else {
+      return false;
+    }
+  }
+  template <typename E>
+  IndexRange find_slice_by_key(std::function<E &(T &)> extract, E &key) {
+    BinarySearch start = binary_search_by(m_data, [extract, key](T &element) {
+      E &key_ = extract(element);
+      if (key_ < key) {
+        return -1;
+      } else {
+        return 1;
+      }
+    });
+    BinarySearch end = binary_search_by(m_data, [extract, key](T &element) {
+      E &key_ = extract(element);
+      if (key_ < key) {
+        return 1;
+      } else {
+        return -1;
+      }
+    });
+    return IndexRange{start.index, end.index};
+  }
+  bool iter(T value) {
+    BinarySearch position = find(value);
+
+    if (position.found) {
+      m_data.erase(position.index);
+      return true;
+    } else {
+      return false;
+    }
+  }
+};
+
+struct LandEntry {
+  std::string owner;
+  std::string city;
+  std::string addr;
+  std::string region;
+  unsigned int id;
+};
+
 class CIterator {
+
 public:
   bool atEnd() const;
   void next();
@@ -30,6 +156,8 @@ private:
 };
 
 class CLandRegister {
+  std::vector<LandEntry> lands;
+
 public:
   bool add(const std::string &city, const std::string &addr,
            const std::string &region, unsigned int id);
@@ -55,9 +183,6 @@ public:
   CIterator listByAddr() const;
 
   CIterator listByOwner(const std::string &owner) const;
-
-private:
-  // todo
 };
 #ifndef __PROGTEST__
 static void test0() {
@@ -232,9 +357,37 @@ static void test1() {
   assert(!x.del("Dejvice", 9873));
 }
 
+struct Tuple {
+  int x;
+  int y;
+};
+
 int main(void) {
+  TrashSet<Tuple> set([](Tuple &a, Tuple &b) {
+    if (a.x < b.x) {
+      return -1;
+    } else if (a.x > b.x) {
+      return 1;
+    }
+    if (a.y < b.y) {
+      return -1;
+    } else if (a.y > b.y) {
+      return 1;
+    }
+    return 0;
+  });
+  set.insert(Tuple{1, 2});
+  set.insert(Tuple{1, 3});
+  set.insert(Tuple{5, 3});
+  set.insert(Tuple{-1, 3});
+  set.insert(Tuple{1, -5});
+
+  int a = 1;
+  set.find_slice_by_key<int>([](Tuple &e) -> int & { return e.x; }, a);
+
   test0();
   test1();
   return EXIT_SUCCESS;
 }
+
 #endif /* __PROGTEST__ */
