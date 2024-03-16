@@ -48,24 +48,17 @@ BinarySearch binary_search_by(T *self, size_t len,
   return BinarySearch{left, false};
 }
 
-struct IndexRange {
-  size_t start;
-  size_t end;
-};
-
-struct LandEntry {
-  std::string owner;
-  std::string city;
-  std::string addr;
-  std::string region;
-  unsigned int id;
-};
-
 template <typename T> struct Slice {
   T *start;
   T *end;
 
   bool empty() const { return start >= end; }
+  size_t len() const {
+    if (empty()) {
+      return 0;
+    }
+    return end - start;
+  }
   void next() { start++; }
   void debug() {
     while (!empty()) {
@@ -74,24 +67,6 @@ template <typename T> struct Slice {
     }
     std::cout << std::endl;
   }
-};
-
-class CIterator {
-  Slice<LandEntry> inner;
-
-public:
-  CIterator(LandEntry *start, LandEntry *end)
-      : inner(Slice<LandEntry>{start, end}) {}
-  bool atEnd() const { return inner.empty(); }
-  void next() { inner.next(); }
-  std::string city() const { return inner.start->city; }
-  std::string addr() const { return inner.start->addr; }
-  std::string region() const { return inner.start->region; }
-  unsigned id() const { return inner.start->id; }
-  std::string owner() const { return inner.start->owner; }
-
-private:
-  // todo
 };
 
 template <typename T> using EntryOrdering = int (*)(const T &, const T &);
@@ -140,7 +115,7 @@ public:
     }
   }
   template <typename E>
-  IndexRange find_slice_by_key(const E &key, const E &(*extract)(const T &)) {
+  Slice<T> find_slice_by_key(const E &key, const E &(*extract)(const T &)) {
     BinarySearch start = binary_search_by<T>(
         m_data.data(), m_data.size(), [extract, &key](const T &element) -> int {
           const E &element_key = extract(element);
@@ -159,10 +134,9 @@ public:
             return 1;
           }
         });
-    return IndexRange{start.index, end.index};
-  }
-  Slice<T> iter(IndexRange range) {
-    return Slice<T>{m_data.data() + range.start, m_data.data() + range.end};
+
+    T *ptr = m_data.data();
+    return Slice<T>{ptr + start.index, ptr + end.index};
   }
   void print() const {
     for (const T &element : m_data) {
@@ -170,6 +144,32 @@ public:
     }
     std::cout << std::endl;
   }
+};
+
+struct LandEntry {
+  std::string owner;
+  std::string city;
+  std::string addr;
+  std::string region;
+  unsigned int id;
+};
+
+class CIterator {
+  Slice<LandEntry> inner;
+
+public:
+  CIterator(LandEntry *start, LandEntry *end)
+      : inner(Slice<LandEntry>{start, end}) {}
+  bool atEnd() const { return inner.empty(); }
+  void next() { inner.next(); }
+  std::string city() const { return inner.start->city; }
+  std::string addr() const { return inner.start->addr; }
+  std::string region() const { return inner.start->region; }
+  unsigned id() const { return inner.start->id; }
+  std::string owner() const { return inner.start->owner; }
+
+private:
+  // todo
 };
 
 class CLandRegister {
