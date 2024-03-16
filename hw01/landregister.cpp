@@ -11,6 +11,7 @@
 #include <iostream>
 #include <list>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <vector>
 #endif /* __PROGTEST__ */
@@ -31,7 +32,7 @@ BinarySearch binary_search_by(T *self, size_t len,
 
   while (left < right) {
     size_t mid = left + size / 2;
-    size_t cmp = order(self[mid]);
+    int cmp = order(self[mid]);
 
     if (cmp < 0) {
       left = mid + 1;
@@ -47,24 +48,62 @@ BinarySearch binary_search_by(T *self, size_t len,
   return BinarySearch{left, false};
 }
 
-template <typename T>
-BinarySearch binary_search_by(std::vector<T> &vector,
-                              std::function<int(const T &)> order) {
-  return binary_search_by(vector.data(), vector.size(), order);
-}
-
 struct IndexRange {
   size_t start;
   size_t end;
 };
 
-template <typename T> class TrashSet {
-  std::vector<T> m_data;
-  int (*m_order)(const T &, const T &);
+struct LandEntry {
+  std::string owner;
+  std::string city;
+  std::string addr;
+  std::string region;
+  unsigned int id;
+};
+
+template <typename T> struct Slice {
+  T *start;
+  T *end;
+
+  bool empty() const { return start >= end; }
+  void next() { start++; }
+  void debug() {
+    while (!empty()) {
+      std::cout << *start << ' ';
+      next();
+    }
+    std::cout << std::endl;
+  }
+};
+
+class CIterator {
+  Slice<LandEntry> inner;
 
 public:
+  CIterator(LandEntry *start, LandEntry *end)
+      : inner(Slice<LandEntry>{start, end}) {}
+  bool atEnd() const { return inner.empty(); }
+  void next() { inner.next(); }
+  std::string city() const { return inner.start->city; }
+  std::string addr() const { return inner.start->addr; }
+  std::string region() const { return inner.start->region; }
+  unsigned id() const { return inner.start->id; }
+  std::string owner() const { return inner.start->owner; }
+
+private:
+  // todo
+};
+
+template <typename T> using EntryOrdering = int (*)(const T &, const T &);
+
+template <typename T> class TrashSet {
+  std::vector<T> m_data;
+  EntryOrdering<T> order;
+
+public:
+  TrashSet(EntryOrdering<T> order_) : order(order_) {}
   TrashSet()
-      : m_order([](T &a, T &b) {
+      : order([](const T &a, const T &b) {
           if (a < b) {
             return -1;
           } else if (a > b) {
@@ -73,11 +112,11 @@ public:
             return 0;
           }
         }) {}
-  TrashSet(int (*order)(const T &, const T &)) : m_order(order) {}
-  BinarySearch find(T &value) {
-    return binary_search_by(m_data, [&value, this](const T &element) -> int {
-      return m_order(element, value);
-    });
+  BinarySearch find(const T &value) {
+    return binary_search_by<T>(m_data.data(), m_data.size(),
+                               [&value, this](const T &element) -> int {
+                                 return order(element, value);
+                               });
   }
   bool insert(T value) {
     BinarySearch position = find(value);
@@ -91,68 +130,46 @@ public:
     }
   }
   bool remove(T value) {
-    BinarySearch position = find(value);
+    BinarySearch position = find(value, order);
 
     if (position.found) {
-      m_data.erase(position.index);
+      m_data.erase(m_data.begin() + position.index);
       return true;
     } else {
       return false;
     }
   }
   template <typename E>
-  IndexRange find_slice_by_key(std::function<E &(T &)> extract, E &key) {
-    BinarySearch start = binary_search_by(m_data, [extract, key](T &element) {
-      E &key_ = extract(element);
-      if (key_ < key) {
-        return -1;
-      } else {
-        return 1;
-      }
-    });
-    BinarySearch end = binary_search_by(m_data, [extract, key](T &element) {
-      E &key_ = extract(element);
-      if (key_ < key) {
-        return 1;
-      } else {
-        return -1;
-      }
-    });
+  IndexRange find_slice_by_key(const E &key, const E &(*extract)(const T &)) {
+    BinarySearch start = binary_search_by<T>(
+        m_data.data(), m_data.size(), [extract, &key](const T &element) -> int {
+          const E &element_key = extract(element);
+          if (element_key < key) {
+            return -1;
+          } else {
+            return 1;
+          }
+        });
+    BinarySearch end = binary_search_by<T>(
+        m_data.data(), m_data.size(), [extract, &key](const T &element) -> int {
+          const E &element_key = extract(element);
+          if (element_key <= key) {
+            return -1;
+          } else {
+            return 1;
+          }
+        });
     return IndexRange{start.index, end.index};
   }
-  bool iter(T value) {
-    BinarySearch position = find(value);
-
-    if (position.found) {
-      m_data.erase(position.index);
-      return true;
-    } else {
-      return false;
-    }
+  Slice<T> iter(IndexRange range) {
+    return Slice<T>{m_data.data() + range.start, m_data.data() + range.end};
   }
-};
-
-struct LandEntry {
-  std::string owner;
-  std::string city;
-  std::string addr;
-  std::string region;
-  unsigned int id;
-};
-
-class CIterator {
-
-public:
-  bool atEnd() const;
-  void next();
-  std::string city() const;
-  std::string addr() const;
-  std::string region() const;
-  unsigned id() const;
-  std::string owner() const;
-
-private:
-  // todo
+  void print() const {
+    for (const T &element : m_data) {
+      std::cout << element << ' ';
+    }
+    std::cout << std::endl;
+  }
 };
 
 class CLandRegister {
@@ -160,29 +177,41 @@ class CLandRegister {
 
 public:
   bool add(const std::string &city, const std::string &addr,
-           const std::string &region, unsigned int id);
+           const std::string &region, unsigned int id) {
+    return 1;
+  }
 
-  bool del(const std::string &city, const std::string &addr);
+  bool del(const std::string &city, const std::string &addr) { return 1; }
 
-  bool del(const std::string &region, unsigned int id);
+  bool del(const std::string &region, unsigned int id) { return 1; }
 
   bool getOwner(const std::string &city, const std::string &addr,
-                std::string &owner) const;
+                std::string &owner) const {
+    return 1;
+  }
 
   bool getOwner(const std::string &region, unsigned int id,
-                std::string &owner) const;
+                std::string &owner) const {
+    return 1;
+  }
 
   bool newOwner(const std::string &city, const std::string &addr,
-                const std::string &owner);
+                const std::string &owner) {
+    return 1;
+  }
 
   bool newOwner(const std::string &region, unsigned int id,
-                const std::string &owner);
+                const std::string &owner) {
+    return 1;
+  }
 
-  size_t count(const std::string &owner) const;
+  size_t count(const std::string &owner) const { return 1; }
 
-  CIterator listByAddr() const;
+  CIterator listByAddr() const { return CIterator{nullptr, nullptr}; }
 
-  CIterator listByOwner(const std::string &owner) const;
+  CIterator listByOwner(const std::string &owner) const {
+    return CIterator{nullptr, nullptr};
+  }
 };
 #ifndef __PROGTEST__
 static void test0() {
@@ -360,34 +389,50 @@ static void test1() {
 struct Tuple {
   int x;
   int y;
+
+  friend std::ostream &operator<<(std::ostream &os, const Tuple &t) {
+    return os << '(' << t.x << ' ' << t.y << ')';
+  }
 };
 
+int tuple_order(const Tuple &a, const Tuple &b) {
+  if (a.x < b.x) {
+    return -1;
+  } else if (a.x > b.x) {
+    return 1;
+  }
+  if (a.y < b.y) {
+    return -1;
+  } else if (a.y > b.y) {
+    return 1;
+  }
+  return 0;
+}
+
+const int &extract_x(const Tuple &t) { return t.x; }
+
 int main(void) {
-  TrashSet<Tuple> set([](Tuple &a, Tuple &b) {
-    if (a.x < b.x) {
-      return -1;
-    } else if (a.x > b.x) {
-      return 1;
-    }
-    if (a.y < b.y) {
-      return -1;
-    } else if (a.y > b.y) {
-      return 1;
-    }
-    return 0;
-  });
+  TrashSet<Tuple> set(tuple_order);
+
   set.insert(Tuple{1, 2});
-  set.insert(Tuple{1, 3});
   set.insert(Tuple{5, 3});
-  set.insert(Tuple{-1, 3});
+  set.insert(Tuple{-9, 5});
+  set.insert(Tuple{8, 1});
+  set.insert(Tuple{5, 1});
   set.insert(Tuple{1, -5});
+  set.insert(Tuple{-1, 3});
+  set.insert(Tuple{1, 3});
 
-  int a = 1;
-  set.find_slice_by_key<int>([](Tuple &e) -> int & { return e.x; }, a);
+  set.print();
 
-  test0();
-  test1();
-  return EXIT_SUCCESS;
+  int a = 5;
+  IndexRange r = set.find_slice_by_key(a, extract_x);
+  printf("%ld..%ld\n", r.start, r.end);
+  set.iter(r).debug();
+
+  // test0();
+  // test1();
+  return 0;
 }
 
 #endif /* __PROGTEST__ */
