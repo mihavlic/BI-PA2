@@ -2,15 +2,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <iomanip>
 #include <iostream>
 #include <list>
-#include <memory>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -24,7 +21,7 @@ struct BinarySearch {
 // essentially std::lower_bound, stolen from
 // https://doc.rust-lang.org/src/core/slice/mod.rs.html#2825-2827
 template <typename T>
-BinarySearch binary_search_by(T *self, size_t len,
+BinarySearch binary_search_by(const T *self, size_t len,
                               std::function<int(const T &)> order) {
   size_t size = len;
   size_t left = 0;
@@ -48,9 +45,22 @@ BinarySearch binary_search_by(T *self, size_t len,
   return BinarySearch{left, false};
 }
 
+struct IndexRange {
+  size_t start;
+  size_t end;
+
+  bool empty() const { return start >= end; }
+  size_t len() const {
+    if (empty()) {
+      return 0;
+    }
+    return end - start;
+  }
+};
+
 template <typename T> struct Slice {
-  T *start;
-  T *end;
+  const T *start;
+  const T *end;
 
   bool empty() const { return start >= end; }
   size_t len() const {
@@ -87,27 +97,43 @@ public:
             return 0;
           }
         }) {}
-  BinarySearch find(const T &value) {
+  BinarySearch find(const T &value) const {
     return binary_search_by<T>(m_data.data(), m_data.size(),
                                [&value, this](const T &element) -> int {
                                  return order(element, value);
                                });
   }
+  T *find_ptr(const T &value) {
+    BinarySearch entry = find(value);
+    if (entry.found) {
+      return begin() + entry.index;
+    } else {
+      return nullptr;
+    }
+  }
+  void insert_entry(BinarySearch position, T value) {
+    if (!position.found) {
+      m_data.insert(m_data.begin() + position.index, value);
+    }
+  }
   bool insert(T value) {
     BinarySearch position = find(value);
 
+    insert_entry(position, value);
+
     if (position.found) {
-      m_data[position.index] = value;
       return false;
     } else {
-      m_data.insert(m_data.begin() + position.index, value);
       return true;
     }
   }
-  bool remove(T value) {
-    BinarySearch position = find(value, order);
+  bool remove(T value, T *out) {
+    BinarySearch position = find(value);
 
     if (position.found) {
+      if (out) {
+        *out = std::move(m_data[position.index]);
+      }
       m_data.erase(m_data.begin() + position.index);
       return true;
     } else {
@@ -115,7 +141,8 @@ public:
     }
   }
   template <typename E>
-  Slice<T> find_slice_by_key(const E &key, const E &(*extract)(const T &)) {
+  IndexRange find_slice_by_key(const E &key,
+                               const E &(*extract)(const T &)) const {
     BinarySearch start = binary_search_by<T>(
         m_data.data(), m_data.size(), [extract, &key](const T &element) -> int {
           const E &element_key = extract(element);
@@ -125,94 +152,265 @@ public:
             return 1;
           }
         });
+
     BinarySearch end = binary_search_by<T>(
         m_data.data(), m_data.size(), [extract, &key](const T &element) -> int {
           const E &element_key = extract(element);
-          if (element_key <= key) {
+          if (!(element_key > key)) {
             return -1;
           } else {
             return 1;
           }
         });
 
-    T *ptr = m_data.data();
-    return Slice<T>{ptr + start.index, ptr + end.index};
+    return IndexRange{start.index, end.index};
   }
-  void print() const {
+  void debug() const {
     for (const T &element : m_data) {
       std::cout << element << ' ';
     }
     std::cout << std::endl;
   }
+  Slice<T> slice(IndexRange range) const {
+    return Slice<T>{begin() + range.start, begin() + range.end};
+  }
+  T &operator[](size_t index) { return m_data[index]; }
+  const T &operator[](size_t index) const { return m_data[index]; }
+  T *data() { return m_data.data(); }
+  const T *data() const { return m_data.data(); }
+  size_t size() const { return m_data.size(); }
+  T *begin() { return m_data.data(); }
+  const T *begin() const { return m_data.data(); }
+  T *end() { return m_data.data() + m_data.size(); }
+  const T *end() const { return m_data.data() + m_data.size(); }
+};
+
+struct CaseInsensitive {
+  std::string inner;
+  bool operator<(const CaseInsensitive &rhs) const {
+    return std::lexicographical_compare(
+        std::begin(inner), std::end(inner), std::begin(rhs.inner),
+        std::end(rhs.inner), [](const char &char1, const char &char2) {
+          return std::tolower(char1) < std::tolower(char2);
+        });
+  }
+  bool operator>(const CaseInsensitive &rhs) const { return rhs < *this; }
 };
 
 struct LandEntry {
-  std::string owner;
+  CaseInsensitive owner;
+  unsigned counter;
+  unsigned id;
   std::string city;
   std::string addr;
   std::string region;
-  unsigned int id;
 };
 
 class CIterator {
-  Slice<LandEntry> inner;
+  Slice<const LandEntry *> inner;
 
 public:
-  CIterator(LandEntry *start, LandEntry *end)
-      : inner(Slice<LandEntry>{start, end}) {}
+  CIterator(Slice<const LandEntry *> slice) : inner(slice) {}
+  CIterator(LandEntry *const *start, LandEntry *const *end)
+      : inner(Slice<const LandEntry *>{start, end}) {}
   bool atEnd() const { return inner.empty(); }
   void next() { inner.next(); }
-  std::string city() const { return inner.start->city; }
-  std::string addr() const { return inner.start->addr; }
-  std::string region() const { return inner.start->region; }
-  unsigned id() const { return inner.start->id; }
-  std::string owner() const { return inner.start->owner; }
-
-private:
-  // todo
+  std::string city() const { return (*inner.start)->city; }
+  std::string addr() const { return (*inner.start)->addr; }
+  std::string region() const { return (*inner.start)->region; }
+  unsigned id() const { return (*inner.start)->id; }
+  std::string owner() const { return (*inner.start)->owner.inner; }
+  size_t len() const { return inner.len(); }
 };
 
-class CLandRegister {
-  std::vector<LandEntry> lands;
-
-public:
-  bool add(const std::string &city, const std::string &addr,
-           const std::string &region, unsigned int id) {
+template <typename A, typename B>
+int cmp_two(const A &a1, const B &a2, const A &b1, const B &b2) {
+  if (a1 < b1) {
+    return -1;
+  } else if (a1 > b1) {
     return 1;
   }
+  if (a2 < b2) {
+    return -1;
+  } else if (a2 > b2) {
+    return 1;
+  }
+  return 0;
+}
 
-  bool del(const std::string &city, const std::string &addr) { return 1; }
+using GoodParsingRules = LandEntry *;
 
-  bool del(const std::string &region, unsigned int id) { return 1; }
+int cmp_entry_region_id(const GoodParsingRules &a, const GoodParsingRules &b) {
+  return cmp_two<std::string, unsigned>(a->region, a->id, b->region, b->id);
+}
+
+int cmp_entry_city_addr(const GoodParsingRules &a, const GoodParsingRules &b) {
+  return cmp_two<std::string, std::string>(a->city, a->addr, b->city, b->addr);
+}
+
+int cmp_entry_owner_counter(const GoodParsingRules &a,
+                            const GoodParsingRules &b) {
+  return cmp_two<CaseInsensitive, unsigned>(a->owner, a->counter, b->owner,
+                                            b->counter);
+}
+
+class CLandRegister {
+  unsigned counter;
+  TrashSet<LandEntry *> region_id{cmp_entry_region_id};
+  TrashSet<LandEntry *> city_addr{cmp_entry_city_addr};
+  TrashSet<LandEntry *> owner_counter{cmp_entry_owner_counter};
+
+public:
+  ~CLandRegister() {
+    for (LandEntry *i : region_id) {
+      delete i;
+    }
+  }
+  bool add(const std::string &city, const std::string &addr,
+           const std::string &region, unsigned int id) {
+    LandEntry *entry = new LandEntry{
+        "", counter, id, city, addr, region,
+    };
+
+    BinarySearch a = region_id.find(entry);
+    BinarySearch b = city_addr.find(entry);
+
+    if (a.found || b.found) {
+      delete entry;
+      return false;
+    }
+
+    region_id.insert_entry(a, entry);
+    city_addr.insert_entry(b, entry);
+    owner_counter.insert(entry);
+
+    counter++;
+
+    return true;
+  }
+
+  bool del(const std::string &city, const std::string &addr) {
+    LandEntry tmp{
+        "", 0, 0, city, addr, "",
+    };
+    LandEntry *out = nullptr;
+
+    if (city_addr.remove(&tmp, &out)) {
+      region_id.remove(out, nullptr);
+      owner_counter.remove(out, nullptr);
+
+      delete out;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  bool del(const std::string &region, unsigned int id) {
+    LandEntry tmp{
+        "", 0, id, "", "", region,
+    };
+    LandEntry *out = nullptr;
+
+    if (region_id.remove(&tmp, &out)) {
+      city_addr.remove(out, nullptr);
+      owner_counter.remove(out, nullptr);
+
+      delete out;
+      return true;
+    } else {
+      return false;
+    }
+  }
 
   bool getOwner(const std::string &city, const std::string &addr,
                 std::string &owner) const {
-    return 1;
+    LandEntry tmp{
+        "", 0, 0, city, addr, "",
+    };
+    BinarySearch entry = city_addr.find(&tmp);
+
+    if (entry.found) {
+      owner = city_addr[entry.index]->owner.inner;
+      return true;
+    } else {
+      return false;
+    }
   }
 
   bool getOwner(const std::string &region, unsigned int id,
                 std::string &owner) const {
-    return 1;
+    LandEntry tmp{
+        "", 0, id, "", "", region,
+    };
+    BinarySearch entry = region_id.find(&tmp);
+
+    if (entry.found) {
+      owner = region_id[entry.index]->owner.inner;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  bool setOwner(LandEntry *entry, const std::string &owner) {
+    if (entry->owner.inner == owner) {
+      return false;
+    }
+
+    owner_counter.remove(entry, nullptr);
+    entry->owner.inner = owner;
+    entry->counter = counter++;
+    owner_counter.insert(entry);
+
+    return true;
   }
 
   bool newOwner(const std::string &city, const std::string &addr,
                 const std::string &owner) {
-    return 1;
+    LandEntry tmp{
+        "", 0, 0, city, addr, "",
+    };
+    LandEntry **entry = city_addr.find_ptr(&tmp);
+    if (!entry) {
+      return false;
+    }
+    return setOwner(*entry, owner);
   }
 
   bool newOwner(const std::string &region, unsigned int id,
                 const std::string &owner) {
-    return 1;
+    LandEntry tmp{
+        "", 0, id, "", "", region,
+    };
+
+    LandEntry **entry = region_id.find_ptr(&tmp);
+    if (!entry) {
+      return false;
+    }
+    return setOwner(*entry, owner);
   }
 
-  size_t count(const std::string &owner) const { return 1; }
+  size_t count(const std::string &owner) const {
+    return listByOwner(owner).len();
+  }
 
-  CIterator listByAddr() const { return CIterator{nullptr, nullptr}; }
+  CIterator listByAddr() const {
+    return CIterator(city_addr.begin(), city_addr.end());
+  }
 
   CIterator listByOwner(const std::string &owner) const {
-    return CIterator{nullptr, nullptr};
+    CaseInsensitive a{owner};
+    IndexRange range = owner_counter.find_slice_by_key<CaseInsensitive>(
+        a, [](LandEntry *const &t) -> const CaseInsensitive & {
+          return t->owner;
+        });
+
+    return CIterator(owner_counter.begin() + range.start,
+                     owner_counter.begin() + range.end);
   }
 };
+
 #ifndef __PROGTEST__
 static void test0() {
   CLandRegister x;
@@ -224,39 +422,79 @@ static void test0() {
   assert(x.add("Plzen", "Evropska", "Plzen mesto", 78901));
   assert(x.add("Liberec", "Evropska", "Librec", 4552));
   CIterator i0 = x.listByAddr();
-  assert(!i0.atEnd() && i0.city() == "Liberec" && i0.addr() == "Evropska" &&
-         i0.region() == "Librec" && i0.id() == 4552 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Liberec");
+  assert(i0.addr() == "Evropska");
+  assert(i0.region() == "Librec");
+  assert(i0.id() == 4552);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Plzen" && i0.addr() == "Evropska" &&
-         i0.region() == "Plzen mesto" && i0.id() == 78901 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Plzen");
+  assert(i0.addr() == "Evropska");
+  assert(i0.region() == "Plzen mesto");
+  assert(i0.id() == 78901);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Evropska" &&
-         i0.region() == "Vokovice" && i0.id() == 12345 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Evropska");
+  assert(i0.region() == "Vokovice");
+  assert(i0.id() == 12345);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Technicka" &&
-         i0.region() == "Dejvice" && i0.id() == 9873 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Technicka");
+  assert(i0.region() == "Dejvice");
+  assert(i0.id() == 9873);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Thakurova" &&
-         i0.region() == "Dejvice" && i0.id() == 12345 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Thakurova");
+  assert(i0.region() == "Dejvice");
+  assert(i0.id() == 12345);
+  assert(i0.owner() == "");
   i0.next();
   assert(i0.atEnd());
 
   assert(x.count("") == 5);
   CIterator i1 = x.listByOwner("");
-  assert(!i1.atEnd() && i1.city() == "Prague" && i1.addr() == "Thakurova" &&
-         i1.region() == "Dejvice" && i1.id() == 12345 && i1.owner() == "");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Prague");
+  assert(i1.addr() == "Thakurova");
+  assert(i1.region() == "Dejvice");
+  assert(i1.id() == 12345);
+  assert(i1.owner() == "");
   i1.next();
-  assert(!i1.atEnd() && i1.city() == "Prague" && i1.addr() == "Evropska" &&
-         i1.region() == "Vokovice" && i1.id() == 12345 && i1.owner() == "");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Prague");
+  assert(i1.addr() == "Evropska");
+  assert(i1.region() == "Vokovice");
+  assert(i1.id() == 12345);
+  assert(i1.owner() == "");
   i1.next();
-  assert(!i1.atEnd() && i1.city() == "Prague" && i1.addr() == "Technicka" &&
-         i1.region() == "Dejvice" && i1.id() == 9873 && i1.owner() == "");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Prague");
+  assert(i1.addr() == "Technicka");
+  assert(i1.region() == "Dejvice");
+  assert(i1.id() == 9873);
+  assert(i1.owner() == "");
   i1.next();
-  assert(!i1.atEnd() && i1.city() == "Plzen" && i1.addr() == "Evropska" &&
-         i1.region() == "Plzen mesto" && i1.id() == 78901 && i1.owner() == "");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Plzen");
+  assert(i1.addr() == "Evropska");
+  assert(i1.region() == "Plzen mesto");
+  assert(i1.id() == 78901);
+  assert(i1.owner() == "");
   i1.next();
-  assert(!i1.atEnd() && i1.city() == "Liberec" && i1.addr() == "Evropska" &&
-         i1.region() == "Librec" && i1.id() == 4552 && i1.owner() == "");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Liberec");
+  assert(i1.addr() == "Evropska");
+  assert(i1.region() == "Librec");
+  assert(i1.id() == 4552);
+  assert(i1.owner() == "");
   i1.next();
   assert(i1.atEnd());
 
@@ -268,45 +506,85 @@ static void test0() {
   assert(x.newOwner("Dejvice", 9873, "CVUT"));
   assert(x.newOwner("Plzen", "Evropska", "Anton Hrabis"));
   assert(x.newOwner("Librec", 4552, "Cvut"));
-  assert(x.getOwner("Prague", "Thakurova", owner) && owner == "CVUT");
-  assert(x.getOwner("Dejvice", 12345, owner) && owner == "CVUT");
-  assert(x.getOwner("Prague", "Evropska", owner) && owner == "");
-  assert(x.getOwner("Vokovice", 12345, owner) && owner == "");
-  assert(x.getOwner("Prague", "Technicka", owner) && owner == "CVUT");
-  assert(x.getOwner("Dejvice", 9873, owner) && owner == "CVUT");
-  assert(x.getOwner("Plzen", "Evropska", owner) && owner == "Anton Hrabis");
-  assert(x.getOwner("Plzen mesto", 78901, owner) && owner == "Anton Hrabis");
-  assert(x.getOwner("Liberec", "Evropska", owner) && owner == "Cvut");
-  assert(x.getOwner("Librec", 4552, owner) && owner == "Cvut");
+  assert(x.getOwner("Prague", "Thakurova", owner));
+  assert(owner == "CVUT");
+  assert(x.getOwner("Dejvice", 12345, owner));
+  assert(owner == "CVUT");
+  assert(x.getOwner("Prague", "Evropska", owner));
+  assert(owner == "");
+  assert(x.getOwner("Vokovice", 12345, owner));
+  assert(owner == "");
+  assert(x.getOwner("Prague", "Technicka", owner));
+  assert(owner == "CVUT");
+  assert(x.getOwner("Dejvice", 9873, owner));
+  assert(owner == "CVUT");
+  assert(x.getOwner("Plzen", "Evropska", owner));
+  assert(owner == "Anton Hrabis");
+  assert(x.getOwner("Plzen mesto", 78901, owner));
+  assert(owner == "Anton Hrabis");
+  assert(x.getOwner("Liberec", "Evropska", owner));
+  assert(owner == "Cvut");
+  assert(x.getOwner("Librec", 4552, owner));
+  assert(owner == "Cvut");
   CIterator i3 = x.listByAddr();
-  assert(!i3.atEnd() && i3.city() == "Liberec" && i3.addr() == "Evropska" &&
-         i3.region() == "Librec" && i3.id() == 4552 && i3.owner() == "Cvut");
+  assert(!i3.atEnd());
+  assert(i3.city() == "Liberec");
+  assert(i3.addr() == "Evropska");
+  assert(i3.region() == "Librec");
+  assert(i3.id() == 4552);
+  assert(i3.owner() == "Cvut");
   i3.next();
-  assert(!i3.atEnd() && i3.city() == "Plzen" && i3.addr() == "Evropska" &&
-         i3.region() == "Plzen mesto" && i3.id() == 78901 &&
-         i3.owner() == "Anton Hrabis");
+  assert(!i3.atEnd());
+  assert(i3.city() == "Plzen");
+  assert(i3.addr() == "Evropska");
+  assert(i3.region() == "Plzen mesto");
+  assert(i3.id() == 78901);
+  assert(i3.owner() == "Anton Hrabis");
   i3.next();
-  assert(!i3.atEnd() && i3.city() == "Prague" && i3.addr() == "Evropska" &&
-         i3.region() == "Vokovice" && i3.id() == 12345 && i3.owner() == "");
+  assert(!i3.atEnd());
+  assert(i3.city() == "Prague");
+  assert(i3.addr() == "Evropska");
+  assert(i3.region() == "Vokovice");
+  assert(i3.id() == 12345);
+  assert(i3.owner() == "");
   i3.next();
-  assert(!i3.atEnd() && i3.city() == "Prague" && i3.addr() == "Technicka" &&
-         i3.region() == "Dejvice" && i3.id() == 9873 && i3.owner() == "CVUT");
+  assert(!i3.atEnd());
+  assert(i3.city() == "Prague");
+  assert(i3.addr() == "Technicka");
+  assert(i3.region() == "Dejvice");
+  assert(i3.id() == 9873);
+  assert(i3.owner() == "CVUT");
   i3.next();
-  assert(!i3.atEnd() && i3.city() == "Prague" && i3.addr() == "Thakurova" &&
-         i3.region() == "Dejvice" && i3.id() == 12345 && i3.owner() == "CVUT");
+  assert(!i3.atEnd());
+  assert(i3.city() == "Prague");
+  assert(i3.addr() == "Thakurova");
+  assert(i3.region() == "Dejvice");
+  assert(i3.id() == 12345);
+  assert(i3.owner() == "CVUT");
   i3.next();
   assert(i3.atEnd());
 
   assert(x.count("cvut") == 3);
   CIterator i4 = x.listByOwner("cVuT");
-  assert(!i4.atEnd() && i4.city() == "Prague" && i4.addr() == "Thakurova" &&
-         i4.region() == "Dejvice" && i4.id() == 12345 && i4.owner() == "CVUT");
+  assert(!i4.atEnd());
+  assert(i4.city() == "Prague");
+  assert(i4.addr() == "Thakurova");
+  assert(i4.region() == "Dejvice");
+  assert(i4.id() == 12345);
+  assert(i4.owner() == "CVUT");
   i4.next();
-  assert(!i4.atEnd() && i4.city() == "Prague" && i4.addr() == "Technicka" &&
-         i4.region() == "Dejvice" && i4.id() == 9873 && i4.owner() == "CVUT");
+  assert(!i4.atEnd());
+  assert(i4.city() == "Prague");
+  assert(i4.addr() == "Technicka");
+  assert(i4.region() == "Dejvice");
+  assert(i4.id() == 9873);
+  assert(i4.owner() == "CVUT");
   i4.next();
-  assert(!i4.atEnd() && i4.city() == "Liberec" && i4.addr() == "Evropska" &&
-         i4.region() == "Librec" && i4.id() == 4552 && i4.owner() == "Cvut");
+  assert(!i4.atEnd());
+  assert(i4.city() == "Liberec");
+  assert(i4.addr() == "Evropska");
+  assert(i4.region() == "Librec");
+  assert(i4.id() == 4552 && i4.owner() == "Cvut");
   i4.next();
   assert(i4.atEnd());
 
@@ -355,14 +633,26 @@ static void test1() {
   assert(!x.getOwner("Prague", "THAKUROVA", owner));
   assert(!x.getOwner("Hradcany", 7343, owner));
   CIterator i0 = x.listByAddr();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Evropska" &&
-         i0.region() == "Vokovice" && i0.id() == 12345 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Evropska");
+  assert(i0.region() == "Vokovice");
+  assert(i0.id() == 12345);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Technicka" &&
-         i0.region() == "Dejvice" && i0.id() == 9873 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Technicka");
+  assert(i0.region() == "Dejvice");
+  assert(i0.id() == 9873);
+  assert(i0.owner() == "");
   i0.next();
-  assert(!i0.atEnd() && i0.city() == "Prague" && i0.addr() == "Thakurova" &&
-         i0.region() == "Dejvice" && i0.id() == 12345 && i0.owner() == "");
+  assert(!i0.atEnd());
+  assert(i0.city() == "Prague");
+  assert(i0.addr() == "Thakurova");
+  assert(i0.region() == "Dejvice");
+  assert(i0.id() == 12345);
+  assert(i0.owner() == "");
   i0.next();
   assert(i0.atEnd());
 
@@ -374,8 +664,11 @@ static void test1() {
   assert(!x.newOwner("Dejvice", 12345, "CVUT"));
   assert(x.count("CVUT") == 1);
   CIterator i1 = x.listByOwner("CVUT");
-  assert(!i1.atEnd() && i1.city() == "Prague" && i1.addr() == "Thakurova" &&
-         i1.region() == "Dejvice" && i1.id() == 12345 && i1.owner() == "CVUT");
+  assert(!i1.atEnd());
+  assert(i1.city() == "Prague");
+  assert(i1.addr() == "Thakurova");
+  assert(i1.region() == "Dejvice");
+  assert(i1.id() == 12345 && i1.owner() == "CVUT");
   i1.next();
   assert(i1.atEnd());
 
@@ -386,52 +679,41 @@ static void test1() {
   assert(!x.del("Dejvice", 9873));
 }
 
-struct Tuple {
-  int x;
-  int y;
+template <typename A, typename B> struct Tuple {
+  A x;
+  B y;
 
   friend std::ostream &operator<<(std::ostream &os, const Tuple &t) {
     return os << '(' << t.x << ' ' << t.y << ')';
   }
+  static int cmp(const Tuple<A, B> &a, const Tuple<A, B> &b) {
+    return cmp_two<A, B>(a.x, a.y, b.x, b.y);
+  }
 };
 
-int tuple_order(const Tuple &a, const Tuple &b) {
-  if (a.x < b.x) {
-    return -1;
-  } else if (a.x > b.x) {
-    return 1;
-  }
-  if (a.y < b.y) {
-    return -1;
-  } else if (a.y > b.y) {
-    return 1;
-  }
-  return 0;
-}
-
-const int &extract_x(const Tuple &t) { return t.x; }
+using IntTuple = Tuple<int, int>;
 
 int main(void) {
-  TrashSet<Tuple> set(tuple_order);
+  TrashSet<IntTuple> set(IntTuple::cmp);
 
-  set.insert(Tuple{1, 2});
-  set.insert(Tuple{5, 3});
-  set.insert(Tuple{-9, 5});
-  set.insert(Tuple{8, 1});
-  set.insert(Tuple{5, 1});
-  set.insert(Tuple{1, -5});
-  set.insert(Tuple{-1, 3});
-  set.insert(Tuple{1, 3});
+  set.insert(IntTuple{1, 2});
+  set.insert(IntTuple{5, 3});
+  set.insert(IntTuple{-9, 5});
+  set.insert(IntTuple{8, 1});
+  set.insert(IntTuple{5, 1});
+  set.insert(IntTuple{1, -5});
+  set.insert(IntTuple{-1, 3});
+  set.insert(IntTuple{1, 3});
 
-  set.print();
+  set.debug();
 
   int a = 5;
-  IndexRange r = set.find_slice_by_key(a, extract_x);
-  printf("%ld..%ld\n", r.start, r.end);
-  set.iter(r).debug();
+  IndexRange range = set.find_slice_by_key<int>(
+      a, [](const IntTuple &t) -> const int & { return t.x; });
+  set.slice(range).debug();
 
-  // test0();
-  // test1();
+  test0();
+  test1();
   return 0;
 }
 
