@@ -4,6 +4,7 @@
 		{
 			"type": "shell",
 			"command": "testprog",
+			"label": "testprog build",
 			"args": [
 				"build",
 				"${relativeFile}",
@@ -14,7 +15,11 @@
 				"kind": "build",
 				"isDefault": true
 			},
-			"label": "testprog build"
+			"presentation": {
+				"reveal": "silent",
+				"revealProblems": "onProblem",
+				"close": true
+			}
 		}
 	]
 }

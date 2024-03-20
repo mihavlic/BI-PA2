@@ -16,7 +16,12 @@
                 null
             ],
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "presentation": {
+                "hidden": false,
+                "group": "",
+                "order": 1
+            }
         },
         {
             "type": "lldb",
@@ -25,7 +30,12 @@
             "preLaunchTask": "testprog build",
             "program": "${workspaceFolder}/out/${relativeFileDirname}/${fileBasenameNoExtension}",
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "presentation": {
+                "hidden": false,
+                "group": "",
+                "order": 1
+            }
         }
     ]
 }
