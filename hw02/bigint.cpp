@@ -143,20 +143,28 @@ inline Digit sub_carry_u32(uint32_t a, uint32_t b, uint32_t *carry) {
 
 // x = carry + a + b * c
 // return low_bits(x), carry = high_bits(carry) >> low_bits_size
-Digit mac_with_carry(Digit a, Digit b, Digit c, DoubleDigit *acc) {
-  *acc += (DoubleDigit)a;
-  *acc += (DoubleDigit)b * (DoubleDigit)c;
-  Digit lo = (Digit)*acc;
-  *acc >>= DIGIT_BITS;
+inline Digit mac_carry_u32(Digit a, Digit b, Digit c, Digit *acc) {
+  DoubleDigit d = (DoubleDigit)*acc;
+  d += (DoubleDigit)a;
+  d += (DoubleDigit)b * (DoubleDigit)c;
+
+  Digit hi = double_high(d);
+  Digit lo = double_low(d);
+
+  *acc = hi;
   return lo;
 }
 
 // x = carry + a * b
 // return low_bits(x), carry = high_bits(carry) >> low_bits_size
-Digit mul_with_carry(Digit a, Digit b, DoubleDigit *acc) {
-  *acc += (DoubleDigit)a * (DoubleDigit)b;
-  Digit lo = (Digit)*acc;
-  *acc >>= DIGIT_BITS;
+inline Digit mul_carry_u32(Digit a, Digit b, Digit *acc) {
+  DoubleDigit d = (DoubleDigit)*acc;
+  d += (DoubleDigit)a * (DoubleDigit)b;
+
+  Digit hi = double_high(d);
+  Digit lo = double_low(d);
+
+  *acc = hi;
   return lo;
 }
 
@@ -244,9 +252,9 @@ void mac_digit(Digits a, ConstDigits b, Digit c) {
 
   size_t b_len = b.size();
 
-  DoubleDigit carry = 0;
+  Digit carry = 0;
   for (size_t i = 0; i < b_len; i++) {
-    a[i] = mac_with_carry(a[i], b[i], c, &carry);
+    a[i] = mac_carry_u32(a[i], b[i], c, &carry);
   }
 
   // carry high bits are always zero after mac_with_carry
@@ -286,19 +294,23 @@ void sub_digit(Digits a, Digit b) {
 Digit mul_digit(Digits a, Digit b) {
   size_t len = a.size();
 
-  DoubleDigit carry = 0;
+  Digit carry = 0;
   for (size_t i = 0; i < len; i++) {
-    a[i] = mul_with_carry(a[i], b, &carry);
+    a[i] = mul_carry_u32(a[i], b, &carry);
   }
 
   return carry;
 }
 
-inline lldiv_t div_wide(Digit hi, Digit lo, Digit divisor) {
-  DoubleDigit lhs = double_pack(hi, lo);
-  DoubleDigit rhs = (DoubleDigit)divisor;
+// return a / b, *rem = a % b
+inline Digit div_wide(Digit a, Digit b, Digit *rem) {
+  DoubleDigit lhs = double_pack(*rem, a);
+  DoubleDigit rhs = (DoubleDigit)b;
 
-  return std::lldiv(lhs, rhs);
+  auto q_r = std::ldiv(lhs, rhs);
+
+  *rem = (Digit)q_r.rem;
+  return (Digit)q_r.quot;
 }
 
 // divides a, returns rem
@@ -308,14 +320,8 @@ Digit div_rem_digit(Digits a, Digit divisor) {
   }
 
   Digit rem = 0;
-  for (size_t i = a.size() - 1;; i--) {
-    auto q_r = div_wide(rem, a[i], divisor);
-    a[i] = (Digit)q_r.quot;
-    rem = (Digit)q_r.rem;
-
-    if (i == 0) {
-      break;
-    }
+  for (size_t i = a.size(); i--;) {
+    a[i] = div_wide(a[i], divisor, &rem);
   }
 
   return rem;
@@ -336,12 +342,8 @@ Digits normalize_slice(Digits digits) {
     return digits;
   }
 
-  size_t i = digits.size() - 1;
-  while (digits[i] == 0) {
-    if (i == 0) {
-      break;
-    }
-    i--;
+  size_t i = digits.size();
+  while (i-- && digits[i] == 0) {
   }
   return Digits(digits.begin(), digits.begin() + i + 1);
 }
@@ -498,7 +500,8 @@ public:
       if (cmp < 0) {
         auto other_copy = other.digits;
         sub2(other_copy, this->digits);
-        is_negative = other.is_negative;
+
+        this->is_negative = other.is_negative;
         this->digits = other_copy;
         normalize();
       } else if (cmp > 0) {
@@ -527,8 +530,8 @@ public:
     OwnedDigits dst(this->size() + other.size(), 0);
     mac3(dst, this->const_slice(), other.const_slice());
 
-    digits = dst;
-    is_negative = (is_negative == !other.is_negative);
+    this->digits = dst;
+    this->is_negative = (is_negative == !other.is_negative);
     normalize();
   }
   void operator*=(Digit other) {
@@ -553,8 +556,8 @@ public:
     copy.normalize();
 
     while (copy.size() > 1) {
-      Digit r = copy.div_rem(10'000'000);
-      while (r > 0) {
+      Digit r = copy.div_rem(1000'000'000);
+      for (int i = 0; i < 9; i++) {
         decoded.push_back('0' + (r % 10));
         r /= 10;
       }
@@ -562,17 +565,20 @@ public:
 
     if (copy.size() > 0) {
       Digit r = copy.digits[0];
+      // do not emit tailing zeros
       while (r > 0) {
         decoded.push_back('0' + (r % 10));
         r /= 10;
       }
     }
-
     if (decoded.empty()) {
       decoded.push_back('0');
     } else if (copy.is_negative) {
       decoded.push_back('-');
     }
+
+    // expected: -4761556948575111126880 6273660670 73182286
+    // got:      -4761556948575111126880 627366067  73182286
 
     return decoded;
   }
@@ -742,7 +748,8 @@ static bool equal(const CBigInt &x, const char val[]) {
   std::ostringstream oss;
   oss << x;
   if (oss.str() != val) {
-    std::cout << "expected: " << val << "\ngot: " << oss.str() << std::endl;
+    std::cout << "expected: " << val << "\ngot:      " << oss.str()
+              << std::endl;
     return false;
   }
   return true;
