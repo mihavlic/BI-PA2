@@ -63,7 +63,7 @@ template <typename T> struct Slice {
   const T *end;
 
   bool empty() const { return start >= end; }
-  size_t len() const {
+  size_t size() const {
     if (empty()) {
       return 0;
     }
@@ -220,7 +220,7 @@ public:
   std::string region() const { return (*inner.start)->region; }
   unsigned id() const { return (*inner.start)->id; }
   std::string owner() const { return (*inner.start)->owner.inner; }
-  size_t len() const { return inner.len(); }
+  size_t len() const { return inner.size(); }
 };
 
 template <typename A, typename B>
