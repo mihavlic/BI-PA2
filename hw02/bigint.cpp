@@ -188,8 +188,8 @@ Digit add2(Digits a, ConstDigits b) {
   return carry;
 }
 
-// a -= b
-void sub2(Digits a, ConstDigits b) {
+// a -= b, return carry
+Digit sub2(Digits a, ConstDigits b) {
   size_t a_len = a.size();
   size_t len = std::min(a_len, b.size());
 
@@ -204,7 +204,20 @@ void sub2(Digits a, ConstDigits b) {
     a[i] = sub_carry_u32(a[i], 0, &carry);
   }
 
-  assert(carry == 0);
+  return carry;
+}
+
+// invert digit bits, then add 1
+void twos_complement(Digits a) {
+  size_t len = a.size();
+
+  Digit carry = 1;
+  size_t i = 0;
+
+  for (; i < len; i++) {
+    a[i] = ~a[i];
+    a[i] = add_carry_u32(a[i], 0, &carry);
+  }
 }
 
 // a += b
@@ -496,20 +509,17 @@ public:
     if (this->is_negative == other.is_negative) {
       add2_grow(this->digits, other.digits);
     } else {
-      int cmp = this->cmp_absolute(other);
-      if (cmp < 0) {
-        auto other_copy = other.digits;
-        sub2(other_copy, this->digits);
-
-        this->is_negative = other.is_negative;
-        this->digits = other_copy;
-        normalize();
-      } else if (cmp > 0) {
-        sub2(this->digits, other.digits);
-        normalize();
-      } else {
-        clear();
+      if (this->size() < other.size()) {
+        this->digits.resize(other.size(), 0);
       }
+      Digit carry = sub2(this->digits, other.digits);
+      if (carry != 0) {
+        // we've subtracted in the wrong order and underflowed
+        twos_complement(this->digits);
+        this->is_negative = !this->is_negative;
+      }
+
+      normalize();
     }
   }
   void operator+=(signed int other) {
@@ -762,6 +772,11 @@ static bool equalHex(const CBigInt &x, const char val[]) {
 }
 int main() {
   CBigInt a, b;
+
+  a = 10;
+  b = -20;
+  a += b;
+  assert(equal(a, "-10"));
 
   std::istringstream is;
   a = 10;
