@@ -19,6 +19,11 @@
 #include <vector>
 #endif /* __PROGTEST__ */
 
+// much of this code was initially taken
+// from https://github.com/rust-num/num-bigint
+// but since then I've made significant changes (some of the code was pretty
+// bad)
+
 template <typename T> struct Pair {
   T first;
   T second;
@@ -220,42 +225,6 @@ void twos_complement(Digits a) {
   }
 }
 
-// a += b
-void add2_grow(OwnedDigits &a, ConstDigits b) {
-  size_t a_len = a.size();
-
-  Digit carry = 0;
-  if (a_len < b.size()) {
-    //      232
-    // + 165847  second number is longer than first
-    //
-    //      232
-    // +    847  add the common length
-    //    1 079
-    //    ^ carry out
-    //
-    //           copy the higher digits to first number and add carry from
-    //           previous part
-    //  165 ___  (lower digits masked by slice offset)
-    // +  1  carry in
-    //  166
-    //
-    //  166 079  final result
-    Digit lo_carry = add2(a, b.clamp_size(a_len));
-    a.insert(a.end(), b.begin() + a_len, b.end());
-
-    auto dst = Slice(a).start_at(a_len);
-    auto src = Slice(&lo_carry);
-    carry = add2(dst, src);
-  } else {
-    carry = add2(a, b);
-  };
-
-  if (carry != 0) {
-    a.push_back(carry);
-  }
-}
-
 /// Three argument multiply accumulate:
 /// a += b * c
 void mac_digit(Digits a, ConstDigits b, Digit c) {
@@ -270,7 +239,6 @@ void mac_digit(Digits a, ConstDigits b, Digit c) {
     a[i] = mac_carry_u32(a[i], b[i], c, &carry);
   }
 
-  // carry high bits are always zero after mac_with_carry
   Digit carry_lo = double_low(carry);
   ConstDigits slice(&carry_lo);
 
@@ -292,7 +260,7 @@ Digit add_digit(Digits a, Digit b) {
 }
 
 // a *= b
-void sub_digit(Digits a, Digit b) {
+Digit sub_digit(Digits a, Digit b) {
   size_t len = a.size();
 
   Digit carry = b;
@@ -300,7 +268,7 @@ void sub_digit(Digits a, Digit b) {
     a[i] = sub_carry_u32(a[i], 0, &carry);
   }
 
-  assert(carry == 0);
+  return carry;
 }
 
 // a *= b
@@ -498,24 +466,29 @@ public:
     return rem;
   }
   void operator+=(const CBigInt &other) {
-    if (this->is_empty()) {
-      *this = other;
-      return;
-    }
-    if (other.is_empty()) {
-      return;
-    }
+    OwnedDigits &a = this->digits;
+    const OwnedDigits &b = other.digits;
 
     if (this->is_negative == other.is_negative) {
-      add2_grow(this->digits, other.digits);
-    } else {
-      if (this->size() < other.size()) {
-        this->digits.resize(other.size(), 0);
+      if (a.size() < b.size()) {
+        a.insert(a.end(), b.begin() + a.size(), b.end());
       }
-      Digit carry = sub2(this->digits, other.digits);
+
+      Digit carry = add2(a, ConstDigits(b).clamp_size(a.size()));
+
+      if (carry != 0) {
+        a.push_back(carry);
+      }
+    } else {
+      if (a.size() < b.size()) {
+        a.resize(b.size(), 0);
+      }
+
+      Digit carry = sub2(a, b);
+
       if (carry != 0) {
         // we've subtracted in the wrong order and underflowed
-        twos_complement(this->digits);
+        twos_complement(a);
         this->is_negative = !this->is_negative;
       }
 
@@ -526,14 +499,25 @@ public:
     if (other >= 0) {
       *this += (Digit)other;
     } else {
-      CBigInt aaa(other);
-      *this += aaa;
+      Digit abs = (Digit)-other;
+      if (is_negative) {
+        *this += abs;
+      } else {
+        *this -= abs;
+      }
     }
   }
   void operator+=(Digit other) {
     Digit carry = add_digit(digits, other);
     if (carry != 0) {
       digits.push_back(carry);
+    }
+  }
+  void operator-=(Digit other) {
+    Digit carry = sub_digit(digits, other);
+    if (carry != 0) {
+      twos_complement(digits);
+      this->is_negative = !this->is_negative;
     }
   }
   void operator*=(const CBigInt &other) {
