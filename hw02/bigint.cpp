@@ -29,6 +29,8 @@ template <typename T> struct Pair {
   T second;
 };
 
+template <typename T> struct ConstSlice;
+
 template <typename T> struct Slice {
   T *start;
   size_t len;
@@ -51,6 +53,11 @@ template <typename T> struct Slice {
     }
   }
   void next_by(size_t offset) { *this = start_at(offset); }
+  void copy_from(ConstSlice<T> slice) {
+    size_t len = std::min(size(), slice.size());
+    memcpy(start, slice.start, len * sizeof(T));
+  }
+  void clear() { memset(start, 0, size() * sizeof(T)); }
   T *begin() const { return start; }
   T *end() const { return start + len; }
   Pair<Slice<T>> split_at(size_t at) {
@@ -115,6 +122,32 @@ template <typename T> struct ConstSlice {
     return ConstSlice<T>(start + offset_, len - offset_);
   }
   const T &operator[](size_t index) const { return start[index]; }
+};
+
+template <typename T, const size_t L> class StackSliceAllocator {
+  size_t offset = 0;
+  T storage[L] = {};
+
+public:
+  Slice<T> allocate(size_t size) {
+    if (offset + size > L) {
+      T *ptr = new T[size]();
+      return Slice(ptr, size);
+    } else {
+      size_t old = offset;
+      offset += size;
+      return Slice(this->storage + old, size);
+    }
+  }
+  void free(Slice<T> slice) {
+    T *start = this->storage;
+    T *end = start + L;
+    if (start <= slice.start && slice.start < end) {
+      // do nothing
+    } else {
+      delete[] slice.start;
+    }
+  }
 };
 
 using Digit = uint32_t;
@@ -834,8 +867,6 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     ConstDigits y0 = y_split.first;
     ConstDigits y1 = y_split.second;
 
-    CBigInt z2{}, z0{};
-
     // z3 = (x1 + x0) * (y1 + y0)
     // z2 = x1 * y1
     // z0 = x0 * y0
@@ -844,34 +875,48 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     //       + z2 << 2b
     //       + (z3 - z2 - z0) << b
 
-    {
-      z0.from_slice(x1);
-      z0 += x0;
+    StackSliceAllocator<Digit, 256> alloc{};
 
-      z2.from_slice(y1);
-      z2 += y0;
+    size_t z0_add_size = std::max(x0.size(), x1.size()) + 1;
+    size_t z0_size = std::max(z0_add_size, x0.size() + y0.size());
 
-      // z3 = (x1 + x0) * (y1 + y0)
-      mac3(out.start_at(b), z0.slice(), z2.slice());
-    }
+    size_t z2_add_size = std::max(y0.size(), y1.size()) + 1;
+    size_t z2_size = std::max(z2_add_size, x1.size() + y1.size());
 
-    // z2 = x1 * y1
-    z2.make_zeros(x1.size() + y1.size());
-    mac3(z2.slice(), x1, y1);
-
-    // z0 = x0 * y0
-    z0.make_zeros(x0.size() + y0.size());
-    mac3(z0.slice(), x0, y0);
+    Digits z0 = alloc.allocate(z0_size);
+    Digits z2 = alloc.allocate(z2_size);
 
     Digit carry = 0;
 
+    z0.copy_from(x1);
+    // (x1 + x0)
+    carry |= add2(z0.clamp_size(z0_add_size), x0);
+
+    z2.copy_from(y1);
+    // (y1 + y0)
+    carry |= add2(z2.clamp_size(z2_add_size), y0);
+
+    // z3 = (x1 + x0) * (y1 + y0)
+    mac3(out.start_at(b), z0, z2);
+
+    // z2 = x1 * y1
+    z2.clear();
+    mac3(z2, x1, y1);
+
+    // z0 = x0 * y0
+    z0.clear();
+    mac3(z0, x0, y0);
+
     // x * y = ...
-    carry |= add2(out, z0.slice());
-    carry |= add2(out.start_at(2 * b), z2.slice());
-    carry |= sub2(out.start_at(b), z2.slice());
-    carry |= sub2(out.start_at(b), z0.slice());
+    carry |= add2(out, z0);
+    carry |= add2(out.start_at(2 * b), z2);
+    carry |= sub2(out.start_at(b), z2);
+    carry |= sub2(out.start_at(b), z0);
 
     assert(carry == 0);
+
+    alloc.free(z0);
+    alloc.free(z2);
   }
 }
 
