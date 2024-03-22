@@ -837,6 +837,13 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     CBigInt z2{}, z0{};
 
     // z3 = (x1 + x0) * (y1 + y0)
+    // z2 = x1 * y1
+    // z0 = x0 * y0
+    //
+    // x * y = z0
+    //       + z2 << 2b
+    //       + (z3 - z2 - z0) << b
+
     {
       z0.from_slice(x1);
       z0 += x0;
@@ -844,7 +851,7 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
       z2.from_slice(y1);
       z2 += y0;
 
-      // do not need a temporary
+      // z3 = (x1 + x0) * (y1 + y0)
       mac3(out.start_at(b), z0.slice(), z2.slice());
     }
 
@@ -853,15 +860,13 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     mac3(z2.slice(), x1, y1);
 
     // z0 = x0 * y0
-    // do not need a temporary
-    mac3(out, x0, y0);
-
-    // x * y = z0
-    //       + (z2 << 2b)
-    //       + (z1 << b)
+    z0.make_zeros(x0.size() + y0.size());
+    mac3(z0.slice(), x0, y0);
 
     Digit carry = 0;
 
+    // x * y = ...
+    carry |= add2(out, z0.slice());
     carry |= add2(out.start_at(2 * b), z2.slice());
     carry |= sub2(out.start_at(b), z2.slice());
     carry |= sub2(out.start_at(b), z0.slice());
