@@ -514,7 +514,7 @@ public:
       if (carry != 0) {
         // we've subtracted in the wrong order and underflowed
         twos_complement(a);
-        this->is_negative = !this->is_negative;
+        negate();
       }
 
       normalize();
@@ -542,13 +542,13 @@ public:
     Digit carry = sub_digit(digits, other);
     if (carry != 0) {
       twos_complement(digits);
-      this->is_negative = !this->is_negative;
+      negate();
     }
   }
   void operator-=(const CBigInt &other) {
-    this->is_negative = !this->is_negative;
+    negate();
     *this += other;
-    this->is_negative = !this->is_negative;
+    negate();
   }
   void operator-=(signed int other) {
     negate();
@@ -574,7 +574,7 @@ public:
       digits.push_back(carry);
     }
     if (other < 0) {
-      this->is_negative = !this->is_negative;
+      negate();
     }
   }
   CBigInt operator+(const CBigInt &other) const {
