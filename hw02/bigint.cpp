@@ -31,85 +31,90 @@ template <typename T> struct Pair {
 
 template <typename T> struct Slice {
   T *start;
-  T *stop;
+  size_t len;
 
-  Slice(std::vector<T> &vector)
-      : start(vector.data()), stop(vector.data() + vector.size()) {}
-  Slice(T *ptr) : start(ptr), stop(ptr + 1) {}
-  Slice(T *start_, T *end_) : start(start_), stop(end_) {}
-
-  bool empty() const { return start >= stop; }
-  size_t size() const {
-    if (empty()) {
-      return 0;
+  Slice(std::vector<T> &vector) : start(vector.data()), len(vector.size()) {}
+  Slice(T *ptr) : start(ptr), len(1) {}
+  Slice(T *ptr, size_t size) : start(ptr), len(size) {}
+  Slice(T *start_, T *end_) : start(start_), len(0) {
+    if (start_ < end_) {
+      len = end_ - start_;
     }
-    return stop - start;
   }
-  void next() { start += 1; }
+
+  bool empty() const { return len == 0; }
+  size_t size() const { return len; }
+  void next() {
+    if (!empty()) {
+      start++;
+      len--;
+    }
+  }
   void next_by(size_t offset) { *this = start_at(offset); }
   T *begin() const { return start; }
-  T *end() const { return stop; }
+  T *end() const { return start + len; }
   Pair<Slice<T>> split_at(size_t at) {
     assert(at <= size());
 
-    Slice<T> a{start, start + at};
-    Slice<T> b{start + at, stop};
+    Slice<T> a{start, at};
+    Slice<T> b{start + at, len - at};
 
     return Pair<Slice<T>>{a, b};
   }
   Slice<T> clamp_size(size_t clamp) {
     size_t len = std::min(size(), clamp);
-    return Slice<T>{start, start + len};
+    return Slice<T>(start, len);
   }
   Slice<T> start_at(size_t offset) {
     size_t offset_ = std::min(size(), offset);
-    return Slice<T>{start + offset_, stop};
+    return Slice<T>(start + offset_, len - offset_);
   }
   T &operator[](size_t index) { return start[index]; }
 };
 
 template <typename T> struct ConstSlice {
   const T *start;
-  const T *stop;
+  size_t len;
 
   ConstSlice(const std::vector<T> &vector)
-      : start(vector.data()), stop(vector.data() + vector.size()) {}
-  ConstSlice(const T *start_, const T *end_) : start(start_), stop(end_) {}
-  ConstSlice(const T *ptr) : start(ptr), stop(ptr + 1) {}
-  ConstSlice(Slice<T> range) : start(range.start), stop(range.stop) {}
-
-  bool empty() const { return start >= stop; }
-  size_t size() const {
-    if (empty()) {
-      return 0;
+      : start(vector.data()), len(vector.size()) {}
+  ConstSlice(const T *ptr) : start(ptr), len(1) {}
+  ConstSlice(const T *ptr, size_t size) : start(ptr), len(size) {}
+  ConstSlice(const T *start_, const T *end_) : start(start_), len(0) {
+    if (start_ < end_) {
+      len = end_ - start_;
     }
-    return stop - start;
   }
+  ConstSlice(Slice<T> slice) : start(slice.start), len(slice.len) {}
+
+  bool empty() const { return len == 0; }
+  size_t size() const { return len; }
   void next() {
     if (!empty()) {
-      start += 1;
+      start++;
+      len--;
     }
   }
   void next_by(size_t offset) { *this = start_at(offset); }
   const T *begin() const { return start; }
-  const T *end() const { return stop; }
+  const T *end() const { return start + len; }
   Pair<ConstSlice<T>> split_at(size_t at) {
     assert(at <= size());
 
-    ConstSlice<T> a{start, start + at};
-    ConstSlice<T> b{start + at, stop};
+    ConstSlice<T> a{start, at};
+    ConstSlice<T> b{start + at, len - at};
 
     return Pair<ConstSlice<T>>{a, b};
   }
   ConstSlice<T> clamp_size(size_t clamp) {
     size_t len = std::min(size(), clamp);
-    return ConstSlice<T>{start, start + len};
+    return ConstSlice<T>(start, len);
   }
   ConstSlice<T> start_at(size_t offset) {
     size_t offset_ = std::min(size(), offset);
-    return ConstSlice<T>{start + offset_, stop};
+    return ConstSlice<T>(start + offset_, len - offset_);
   }
-  const T &operator[](size_t index) { return start[index]; }
+  const T &operator[](size_t index) const { return start[index]; }
 };
 
 using Digit = uint32_t;
@@ -120,10 +125,12 @@ using Digits = Slice<Digit>;
 using ConstDigits = ConstSlice<Digit>;
 using OwnedDigits = std::vector<Digit>;
 
-Digit double_high(DoubleDigit digit) { return (Digit)(digit >> DIGIT_BITS); }
-Digit double_low(DoubleDigit digit) { return (Digit)digit; }
-DoubleDigit double_pack(Digit high, Digit low) {
-  return (DoubleDigit)low + ((DoubleDigit)high << DIGIT_BITS);
+inline Digit double_high(DoubleDigit digit) {
+  return (Digit)(digit >> DIGIT_BITS);
+}
+inline Digit double_low(DoubleDigit digit) { return (Digit)digit; }
+inline DoubleDigit double_pack(Digit high, Digit low) {
+  return (DoubleDigit)low | ((DoubleDigit)high << DIGIT_BITS);
 }
 
 // return a + b, overflow in carry
@@ -141,36 +148,30 @@ inline Digit sub_carry_u32(uint32_t a, uint32_t b, uint32_t *carry) {
   uint32_t s;
   uint32_t c1 = __builtin_sub_overflow(a, b, &s);
   uint32_t c2 = __builtin_sub_overflow(s, *carry, &s);
-  *(carry) = c1 | c2;
 
+  *(carry) = c1 | c2;
   return s;
 }
 
 // x = carry + a + b * c
-// return low_bits(x), carry = high_bits(carry) >> low_bits_size
+// return low_bits(x), carry = high_bits(carry) >> DIGIT_BITS
 inline Digit mac_carry_u32(Digit a, Digit b, Digit c, Digit *acc) {
   DoubleDigit d = (DoubleDigit)*acc;
   d += (DoubleDigit)a;
   d += (DoubleDigit)b * (DoubleDigit)c;
 
-  Digit hi = double_high(d);
-  Digit lo = double_low(d);
-
-  *acc = hi;
-  return lo;
+  *acc = double_high(d);
+  return double_low(d);
 }
 
 // x = carry + a * b
-// return low_bits(x), carry = high_bits(carry) >> low_bits_size
+// return low_bits(x), carry = high_bits(carry) >> DIGIT_BITS
 inline Digit mul_carry_u32(Digit a, Digit b, Digit *acc) {
   DoubleDigit d = (DoubleDigit)*acc;
   d += (DoubleDigit)a * (DoubleDigit)b;
 
-  Digit hi = double_high(d);
-  Digit lo = double_low(d);
-
-  *acc = hi;
-  return lo;
+  *acc = double_high(d);
+  return double_low(d);
 }
 
 // a += b, return carry
@@ -225,28 +226,6 @@ void twos_complement(Digits a) {
   }
 }
 
-/// Three argument multiply accumulate:
-/// a += b * c
-void mac_digit(Digits a, ConstDigits b, Digit c) {
-  if (c == 0) {
-    return;
-  }
-
-  size_t b_len = b.size();
-
-  Digit carry = 0;
-  for (size_t i = 0; i < b_len; i++) {
-    a[i] = mac_carry_u32(a[i], b[i], c, &carry);
-  }
-
-  Digit carry_lo = double_low(carry);
-  ConstDigits slice(&carry_lo);
-
-  Digit final_carry = add2(a.start_at(b_len), slice);
-
-  assert(final_carry == 0);
-}
-
 // a += b
 Digit add_digit(Digits a, Digit b) {
   size_t len = a.size();
@@ -278,6 +257,27 @@ Digit mul_digit(Digits a, Digit b) {
   Digit carry = 0;
   for (size_t i = 0; i < len; i++) {
     a[i] = mul_carry_u32(a[i], b, &carry);
+  }
+
+  return carry;
+}
+
+// a += b * c
+Digit mac_digit(Digits a, ConstDigits b, Digit c) {
+  if (c == 0) {
+    return 0;
+  }
+
+  assert(a.size() >= b.size());
+  size_t b_len = b.size();
+
+  Digit carry = 0;
+  for (size_t i = 0; i < b_len; i++) {
+    a[i] = mac_carry_u32(a[i], b[i], c, &carry);
+  }
+
+  if (carry != 0) {
+    carry = add_digit(a.start_at(b_len), carry);
   }
 
   return carry;
@@ -318,7 +318,7 @@ Digit parse_digit_decimal(const char *str, size_t len) {
   return digit;
 }
 
-Digits normalize_slice(Digits digits) {
+ConstDigits normalize_slice(ConstDigits digits) {
   if (digits.empty()) {
     return digits;
   }
@@ -326,29 +326,34 @@ Digits normalize_slice(Digits digits) {
   size_t i = digits.size();
   while (i-- && digits[i] == 0) {
   }
-  return Digits(digits.begin(), digits.begin() + i + 1);
+  return ConstDigits(digits.begin(), digits.begin() + i + 1);
 }
 
-void normalize(OwnedDigits &digits) {
-  Digits normalized = normalize_slice(digits);
-  digits.erase(digits.begin() + normalized.size(), digits.end());
-}
-
-void mac3(OwnedDigits &acc, ConstDigits b, ConstDigits c);
+void mac3(Digits acc, ConstDigits b, ConstDigits c);
 
 class CBigInt {
-  bool is_negative;
+  bool is_negative = false;
   OwnedDigits digits;
 
 public:
   CBigInt() {}
-  CBigInt(Digit digit) : digits({digit}) {}
-  CBigInt(ConstDigits slice) { from_slice(slice); }
-  CBigInt(int digit)
-      : is_negative(digit < 0), digits({(Digit)std::abs(digit)}) {}
-  CBigInt(long digit)
-      : is_negative(digit < 0), digits({(Digit)std::abs(digit)}) {}
-  CBigInt(const char *cursor, const char *end) {
+  CBigInt(CBigInt &&a)
+      : is_negative(a.is_negative), digits(std::move(a.digits)) {}
+  CBigInt(const CBigInt &a) : is_negative(a.is_negative), digits(a.digits) {}
+  explicit CBigInt(ConstDigits digits_)
+      : digits(digits_.begin(), digits_.end()) {
+    normalize();
+  }
+  explicit CBigInt(Digit digit) : digits({digit}) { normalize(); }
+  explicit CBigInt(int digit)
+      : is_negative(digit < 0), digits({(Digit)std::abs((signed long)digit)}) {
+    normalize();
+  }
+  explicit CBigInt(long digit)
+      : is_negative(digit < 0), digits({(Digit)std::abs(digit)}) {
+    normalize();
+  }
+  explicit CBigInt(const char *cursor, const char *end) {
     ConstSlice<char> view(cursor, end);
 
     if (view.empty()) {
@@ -397,20 +402,23 @@ public:
 
       view.next_by(chunk_size);
     }
+
+    normalize();
   }
-  CBigInt(const std::string &str)
+  explicit CBigInt(const std::string &str)
       : CBigInt(str.data(), str.data() + str.size()) {}
-  CBigInt(const char *cstr) : CBigInt(cstr, cstr + strlen(cstr)) {}
+  explicit CBigInt(const char *cstr) : CBigInt(cstr, cstr + strlen(cstr)) {}
   void from_slice(ConstDigits slice) {
     digits.clear();
     digits.insert(digits.begin(), slice.begin(), slice.end());
+    normalize();
   }
   void negate() { is_negative = !is_negative; }
   Digits slice() { return Digits(digits); }
   ConstDigits const_slice() const { return ConstDigits(digits); }
   OwnedDigits &vector() { return digits; }
   size_t size() const { return digits.size(); }
-  bool is_empty() const { return digits.empty(); }
+  bool empty() const { return digits.empty(); }
   void clear() {
     is_negative = false;
     digits.clear();
@@ -419,9 +427,15 @@ public:
     digits.clear();
     digits.resize(size, 0);
   }
-  void normalize() { ::normalize(digits); }
+  void normalize() {
+    ConstDigits normalized = normalize_slice(digits);
+    digits.erase(digits.begin() + normalized.size(), digits.end());
+    if (empty()) {
+      is_negative = false;
+    }
+  }
   int cmp(const CBigInt &other) const {
-    if (is_empty() && other.is_empty()) {
+    if (empty() && other.empty()) {
       return 0;
     }
 
@@ -470,11 +484,14 @@ public:
     const OwnedDigits &b = other.digits;
 
     if (this->is_negative == other.is_negative) {
+      size_t b_clamp_len = b.size();
+
       if (a.size() < b.size()) {
+        b_clamp_len = a.size();
         a.insert(a.end(), b.begin() + a.size(), b.end());
       }
 
-      Digit carry = add2(a, ConstDigits(b).clamp_size(a.size()));
+      Digit carry = add2(a, ConstDigits(b).clamp_size(b_clamp_len));
 
       if (carry != 0) {
         a.push_back(carry);
@@ -520,6 +537,16 @@ public:
       this->is_negative = !this->is_negative;
     }
   }
+  void operator-=(const CBigInt &other) {
+    this->is_negative = !this->is_negative;
+    *this += other;
+    this->is_negative = !this->is_negative;
+  }
+  void operator-=(signed int other) {
+    this->is_negative = !this->is_negative;
+    *this += other;
+    this->is_negative = !this->is_negative;
+  }
   void operator*=(const CBigInt &other) {
     OwnedDigits dst(this->size() + other.size(), 0);
     mac3(dst, this->const_slice(), other.const_slice());
@@ -534,6 +561,15 @@ public:
       digits.push_back(carry);
     }
   }
+  void operator*=(int other) {
+    Digit carry = mul_digit(digits, (Digit)std::abs(other));
+    if (carry != 0) {
+      digits.push_back(carry);
+    }
+    if (other < 0) {
+      this->is_negative = !this->is_negative;
+    }
+  }
   CBigInt operator*(const CBigInt &other) const {
     CBigInt copy = *this;
     copy *= other;
@@ -544,16 +580,26 @@ public:
     copy += other;
     return copy;
   }
-  std::string to_decimal_le() const {
+  CBigInt operator-(const CBigInt &other) const {
+    CBigInt copy = *this;
+    copy.negate();
+    copy += other;
+    copy.negate();
+    return copy;
+  }
+  std::string decode_le(Digit chunk_size, Digit digit_base,
+                        const char alphabet[]) const {
     std::string decoded{};
     CBigInt copy = *this;
     copy.normalize();
 
     while (copy.size() > 1) {
-      Digit r = copy.div_rem(1000'000'000);
-      for (int i = 0; i < 9; i++) {
-        decoded.push_back('0' + (r % 10));
-        r /= 10;
+      Digit r = copy.div_rem(chunk_size);
+      for (Digit i = 1; i < digit_base; i++) {
+        Digit quot = r / digit_base;
+        Digit rem = r % digit_base;
+        decoded.push_back(alphabet[rem]);
+        r = quot;
       }
     }
 
@@ -561,23 +607,57 @@ public:
       Digit r = copy.digits[0];
       // do not emit tailing zeros
       while (r > 0) {
-        decoded.push_back('0' + (r % 10));
-        r /= 10;
+        Digit quot = r / digit_base;
+        Digit rem = r % digit_base;
+        decoded.push_back(alphabet[rem]);
+        r = quot;
       }
     }
     if (decoded.empty()) {
-      decoded.push_back('0');
-    } else if (copy.is_negative) {
+      decoded.push_back(alphabet[0]);
+    } else if (is_negative) {
       decoded.push_back('-');
     }
 
-    // expected: -4761556948575111126880 6273660670 73182286
-    // got:      -4761556948575111126880 627366067  73182286
+    return decoded;
+  }
+  std::string decode_hex_le(const char alphabet[]) const {
+    std::string decoded{};
+    ConstDigits slice = normalize_slice(digits);
+
+    int i = 0;
+    int end = (int)size() - 1;
+    for (; i < end; i++) {
+      Digit r = slice[i];
+      for (int a = 0; a < 8; a++) {
+        decoded.push_back(alphabet[r % 16]);
+        r /= 16;
+      }
+    }
+
+    if (i < (int)size()) {
+      Digit r = slice[i];
+      while (r > 0) {
+        decoded.push_back(alphabet[r % 16]);
+        r /= 16;
+      }
+    }
+
+    if (decoded.empty()) {
+      decoded.push_back(alphabet[0]);
+    } else if (is_negative) {
+      decoded.push_back('-');
+    }
 
     return decoded;
   }
   friend std::ostream &operator<<(std::ostream &stream, const CBigInt &big) {
-    std::string decoded = big.to_decimal_le();
+    std::string decoded;
+    if (stream.flags() & std::ios::hex) {
+      decoded = big.decode_hex_le("0123456789abcdef");
+    } else {
+      decoded = big.decode_le(1'000'000'000, 10, "0123456789");
+    }
     std::reverse(decoded.begin(), decoded.end());
 
     return stream << decoded;
@@ -613,12 +693,97 @@ public:
 
     return stream;
   }
-  bool operator<(const CBigInt &other) { return cmp(other) < 0; }
-  bool operator>(const CBigInt &other) { return cmp(other) > 0; }
-  bool operator<=(const CBigInt &other) { return cmp(other) <= 0; }
-  bool operator>=(const CBigInt &other) { return cmp(other) >= 0; }
-  bool operator==(const CBigInt &other) { return cmp(other) == 0; }
-  bool operator!=(const CBigInt &other) { return cmp(other) != 0; }
+  // clang-format off
+
+  friend CBigInt operator+(const char *a, const CBigInt &b) { return CBigInt(a) + b; }
+  friend CBigInt operator+(const CBigInt &a, const char *b) { return a + CBigInt(b); }
+  friend CBigInt operator+(int a, const CBigInt &b) { return CBigInt(a) + b; }
+  friend CBigInt operator+(const CBigInt &a, int b) { return a + CBigInt(b); }
+  friend CBigInt operator+(std::string &a, const CBigInt &b) { return CBigInt(a) + b; }
+  friend CBigInt operator+(const CBigInt &a, std::string &b) { return a + CBigInt(b); }
+
+  friend CBigInt operator*(const char *a, const CBigInt &b) { return CBigInt(a) * b; }
+  friend CBigInt operator*(const CBigInt &a, const char *b) { return a * CBigInt(b); }
+  friend CBigInt operator*(int a, const CBigInt &b) { return CBigInt(a) * b; }
+  friend CBigInt operator*(const CBigInt &a, int b) { return a * CBigInt(b); }
+  friend CBigInt operator*(std::string &a, const CBigInt &b) { return CBigInt(a) * b; }
+  friend CBigInt operator*(const CBigInt &a, std::string &b) { return a * CBigInt(b); }
+
+  CBigInt &operator=(const char* a) { return *this = CBigInt(a); }
+  CBigInt &operator=(const std::string& a) { return *this = CBigInt(a); }
+  CBigInt &operator=(int a) { return *this = CBigInt(a); }
+  CBigInt &operator=(const CBigInt &a) { 
+    this->digits = a.digits;
+    this->is_negative = a.is_negative;
+    return *this;
+  }
+
+  void operator+=(const char *a) { return *this += CBigInt(a); }
+  void operator+=(const std::string &a) { return *this += CBigInt(a); }
+
+  void operator-=(const char *a) { return *this += CBigInt(a); }
+  void operator-=(const std::string &a) { return *this += CBigInt(a); }
+
+  void operator*=(const char *a) { return *this *= CBigInt(a); }
+  void operator*=(const std::string &a) { return *this *= CBigInt(a); }
+
+  bool operator<(const CBigInt &b) { return this->cmp(b) < 0; }
+  bool operator>(const CBigInt &b) { return this->cmp(b) > 0; }
+  bool operator<=(const CBigInt &b) { return this->cmp(b) <= 0; }
+  bool operator>=(const CBigInt &b) { return this->cmp(b) >= 0; }
+  bool operator==(const CBigInt &b) { return this->cmp(b) == 0; }
+  bool operator!=(const CBigInt &b) { return this->cmp(b) != 0; }
+
+  friend bool operator<(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) < 0; }
+  friend bool operator<(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) < 0; }
+  friend bool operator<(int a, const CBigInt &b) { return CBigInt(a).cmp(b) < 0; }
+  friend bool operator<(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) < 0; }
+  friend bool operator<(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) < 0; }
+  friend bool operator<(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) < 0; }
+  friend bool operator<(const CBigInt &a, const CBigInt &b) { return a.cmp(b) < 0; }
+
+  friend bool operator>(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) > 0;  }
+  friend bool operator>(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) > 0;  }
+  friend bool operator>(int a, const CBigInt &b) { return CBigInt(a).cmp(b) > 0;  }
+  friend bool operator>(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) > 0;  }
+  friend bool operator>(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) > 0;  }
+  friend bool operator>(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) > 0;  }
+  friend bool operator>(const CBigInt &a, const CBigInt &b) { return a.cmp(b) > 0; }
+
+  friend bool operator<=(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) <= 0; }
+  friend bool operator<=(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) <= 0; }
+  friend bool operator<=(int a, const CBigInt &b) { return CBigInt(a).cmp(b) <= 0; }
+  friend bool operator<=(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) <= 0; }
+  friend bool operator<=(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) <= 0; }
+  friend bool operator<=(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) <= 0; }
+  friend bool operator<=(const CBigInt &a, const CBigInt &b) { return a.cmp(b) <= 0; }
+
+  friend bool operator>=(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) >= 0; }
+  friend bool operator>=(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) >= 0; }
+  friend bool operator>=(int a, const CBigInt &b) { return CBigInt(a).cmp(b) >= 0; }
+  friend bool operator>=(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) >= 0; }
+  friend bool operator>=(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) >= 0; }
+  friend bool operator>=(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) >= 0; }
+  friend bool operator>=(const CBigInt &a, const CBigInt &b) { return a.cmp(b) >= 0; }
+
+  friend bool operator==(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) == 0; }
+  friend bool operator==(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) == 0; }
+  friend bool operator==(int a, const CBigInt &b) { return CBigInt(a).cmp(b) == 0; }
+  friend bool operator==(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) == 0; }
+  friend bool operator==(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) == 0; }
+  friend bool operator==(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) == 0; }
+  friend bool operator==(const CBigInt &a, const CBigInt &b) { return a.cmp(b) == 0; }
+
+  friend bool operator!=(const char *a, const CBigInt &b) { return CBigInt(a).cmp(b) != 0; }
+  friend bool operator!=(const CBigInt &a, const char *b) { return a.cmp(CBigInt(b)) != 0; }
+  friend bool operator!=(int a, const CBigInt &b) { return CBigInt(a).cmp(b) != 0; }
+  friend bool operator!=(const CBigInt &a, int b) { return a.cmp(CBigInt(b)) != 0; }
+  friend bool operator!=(const std::string &a, const CBigInt &b) { return CBigInt(a).cmp(b) != 0; }
+  friend bool operator!=(const CBigInt &a, std::string &b) { return a.cmp(CBigInt(b)) != 0; }
+  friend bool operator!=(const CBigInt &a, const CBigInt &b) { return a.cmp(b) != 0; }
+
+  // clang-format on
+
   // default constructor
   // copying/assignment/destruction
   // int constructor
@@ -634,106 +799,78 @@ private:
 };
 
 // acc += b * c
-//
-// yoink
-// https://github.com/rust-num/num-bigint/blob/e9b204cf5abd91dda241a921444cce4abcc6f885/src/biguint/multiplication.rs#L108
-void mac3(OwnedDigits &acc, ConstDigits x, ConstDigits y) {
+void mac3(Digits out, ConstDigits x, ConstDigits y) {
+  x = normalize_slice(x);
+  y = normalize_slice(y);
+  out = out.clamp_size(x.size() + y.size());
+
   if (x.size() > y.size()) {
     std::swap(x, y);
   }
 
-  Slice out(acc);
+  if (x.empty()) {
+    return;
+  }
 
-  // We use three algorithms for different input sizes.
-  //
-  // - For small inputs, long multiplication is fastest.
-  // - Next we use Karatsuba multiplication (Toom-2), which we have optimized
-  //   to avoid unnecessary allocations for intermediate values.
-  // - For the largest inputs we use Toom-3, which better optimizes the
-  //   number of operations, but uses more temporary allocations.
-  //
-  // The thresholds are somewhat arbitrary, chosen by evaluating the results
-  // of `cargo bench --bench bigint multiply`.
-
-  if (out.size() <= 32) {
+  if (x.size() <= 32) {
     size_t x_size = x.size();
     for (size_t i = 0; i < x_size; i++) {
-      mac_digit(out.start_at(i), y, x[i]);
+      Digit overflow = mac_digit(out.start_at(i), y, x[i]);
+      assert(overflow == 0);
     }
   } else {
-    size_t half = x.size() / 2;
-    auto x_split = x.split_at(half);
-    auto x0 = x_split.first;
-    auto x1 = x_split.second;
+    // Karatsuba multiplication
+    // https://en.wikipedia.org/wiki/Karatsuba_algorithm#Basic_step
 
-    auto y_split = y.split_at(half);
-    auto y0 = y_split.first;
-    auto y1 = y_split.second;
+    size_t b = x.size() / 2;
 
-    // when multiplying two numbers, we need at most 2n + 1 bits
-    // log2(a * b) = log2(a) + log2(b)
-    // 1 is added to deal with rounding the fractional number up
-    //
-    // bits(x1 * y1) >= bits(x0 * y0)
-    // because the size of x0 and y0 is either equal or one smaller
-    size_t len = x1.size() + y1.size();
-    CBigInt p{};
+    auto x_split = x.split_at(b);
+    ConstDigits x0 = x_split.first;
+    ConstDigits x1 = x_split.second;
 
-    // stolen karatsuba
-    //
-    // x * y = ... ->
-    //
-    // p0 = x0 * y0
-    // p1 = (x1 - x0) * (y1 - y0)
-    // p2 = x1 * y1
-    //
-    // x * y = p2 * b^2 + p2 * b
-    //       + p0 * b + p0
-    //       - p1 * b
+    auto y_split = y.split_at(b);
+    ConstDigits y0 = y_split.first;
+    ConstDigits y1 = y_split.second;
 
+    CBigInt z3{}, z2{}, z0{};
+
+    // z3 = (x1 + x0) * (y1 + y0)
     {
-      p.make_zeros(len);
+      z0.from_slice(x1);
+      z2.from_slice(x0);
+      z0 += z2;
 
-      // p2 = x1 * y1
-      mac3(p.vector(), x1, y1);
-      p.normalize();
+      z2.from_slice(y1);
+      z3.from_slice(y0);
+      z2 += z3;
 
-      // acc += p2 * b^2 + p2 * b
-      add2(out.start_at(half), p.slice());
-      add2(out.start_at(half * 2), p.slice());
+      z3.make_zeros(z0.size() + z2.size());
+      mac3(z3.slice(), z0.slice(), z2.slice());
+      z3.normalize();
     }
 
-    {
-      p.make_zeros(len);
+    // z2 = x1 * y1
+    z2.make_zeros(x1.size() + y1.size());
+    mac3(z2.slice(), x1, y1);
 
-      // p0 = x0 * y0
-      mac3(p.vector(), x0, y0);
-      p.normalize();
+    // z0 = x0 * y0
+    z0.make_zeros(x0.size() + y0.size());
+    mac3(z0.slice(), x0, y0);
 
-      // acc += p0 * b + p0
-      add2(out, p.slice());
-      add2(out.start_at(half), p.slice());
-    }
+    // x*y = z0
+    //     + (z2 << 2b)
+    //     + (z1 << b)
 
-    {
-      // q = (x1 - x0)
-      // r = (y1 - y0)
-      CBigInt q(x1);
-      p.from_slice(x0);
-      p.negate();
-      q += p;
+    Digit carry = 0;
 
-      CBigInt r(y1);
-      p.from_slice(y0);
-      p.negate();
-      q += p;
+    carry |= add2(out, z0.slice());
+    carry |= add2(out.start_at(2 * b), z2.slice());
+    // z1 = z3 - z2 - z0
+    carry |= add2(out.start_at(b), z3.slice());
+    carry |= sub2(out.start_at(b), z2.slice());
+    carry |= sub2(out.start_at(b), z0.slice());
 
-      // p1 = q * r
-      q *= r;
-
-      // -= p1 * b
-      sub2(out.start_at(half), p.slice());
-    }
+    assert(carry == 0);
   }
 }
 
@@ -742,20 +879,59 @@ static bool equal(const CBigInt &x, const char val[]) {
   std::ostringstream oss;
   oss << x;
   if (oss.str() != val) {
-    std::cout << "expected: " << val << "\ngot:      " << oss.str()
-              << std::endl;
+    std::cout << "expected: " << val << "\ngot:      " << oss.str() << std::endl
+              << std::hex;
     return false;
   }
   return true;
 }
 static bool equalHex(const CBigInt &x, const char val[]) {
-  return true; // hex output is needed for bonus tests only
-  // std::ostringstream oss;
-  // oss << std::hex << x;
-  // return oss . str () == val;
+  std::ostringstream oss;
+  oss << std::hex << x;
+  if (oss.str() != val) {
+    std::cout << "expected: " << val << "\ngot:      " << oss.str() << std::endl
+              << std::hex;
+    return false;
+  }
+  return true;
 }
+
+// #include "fuzz.cpp"
+
 int main() {
+  // fuzz();
+
   CBigInt a, b;
+  a = "115";
+  assert(equalHex(a, "73"));
+
+  a = "15818899999165008224";
+  b = "9203627109237";
+  assert(equal(a * b, "145591256870624226354416451365088"));
+
+  a = "8589934592";
+  b = "8589934595";
+  assert(equal(a * b, "73786976320608010240"));
+
+  a = "8589934592";
+  b = "8589935246";
+  assert(equal(a * b, "73786981912655429632"));
+
+  a = "18446744073709551616";
+  b = "18446744073709551616";
+  assert(equal(a * b, "340282366920938463463374607431768211456"));
+
+  a = "10329099484295688410";
+  b = "242523800600752046";
+  assert(equal(a * b, "2505052463714658325337337681285986860"));
+
+  a = "354108774791";
+  b = "9720934714462407409";
+  assert(equal(a * b, "3442268281561582515829270826519"));
+
+  a = "4682204987";
+  b = "3820358949226912862";
+  assert(equal(a * b, "17887703724200331197070842794"));
 
   a = 10;
   b = -20;
@@ -774,6 +950,22 @@ int main() {
   assert(equal(b, "1050"));
   assert(equal(a, "150"));
   assert(equalHex(a, "96"));
+
+  a = "4294967295";
+  b = "4294967295";
+  assert(equal(a * b, "18446744065119617025"));
+
+  a = "4294967296";
+  b = "1";
+  assert(equal(a * b, "4294967296"));
+
+  a = "4294967296";
+  b = "4294967295";
+  assert(equal(a * b, "18446744069414584320"));
+
+  a = "4294967296";
+  b = "4294967296";
+  assert(equal(a * b, "18446744073709551616"));
 
   a = 10;
   a += -20;
