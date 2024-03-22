@@ -344,6 +344,10 @@ public:
       : digits(digits_.begin(), digits_.end()) {
     normalize();
   }
+  explicit CBigInt(bool negative, OwnedDigits digits_)
+      : is_negative(negative), digits(digits_) {
+    normalize();
+  }
   explicit CBigInt(Digit digit) : digits({digit}) { normalize(); }
   explicit CBigInt(int digit)
       : is_negative(digit < 0), digits({(Digit)std::abs((signed long)digit)}) {
@@ -416,7 +420,6 @@ public:
   void negate() { is_negative = !is_negative; }
   Digits slice() { return Digits(digits); }
   ConstDigits const_slice() const { return ConstDigits(digits); }
-  OwnedDigits &vector() { return digits; }
   size_t size() const { return digits.size(); }
   bool empty() const { return digits.empty(); }
   void clear() {
@@ -479,23 +482,28 @@ public:
     normalize();
     return rem;
   }
+  void operator+=(ConstDigits b) {
+    OwnedDigits &a = this->digits;
+
+    size_t b_clamp_len = b.size();
+
+    if (a.size() < b.size()) {
+      b_clamp_len = a.size();
+      a.insert(a.end(), b.begin() + a.size(), b.end());
+    }
+
+    Digit carry = add2(a, ConstDigits(b).clamp_size(b_clamp_len));
+
+    if (carry != 0) {
+      a.push_back(carry);
+    }
+  }
   void operator+=(const CBigInt &other) {
     OwnedDigits &a = this->digits;
     const OwnedDigits &b = other.digits;
 
     if (this->is_negative == other.is_negative) {
-      size_t b_clamp_len = b.size();
-
-      if (a.size() < b.size()) {
-        b_clamp_len = a.size();
-        a.insert(a.end(), b.begin() + a.size(), b.end());
-      }
-
-      Digit carry = add2(a, ConstDigits(b).clamp_size(b_clamp_len));
-
-      if (carry != 0) {
-        a.push_back(carry);
-      }
+      *this += other.const_slice();
     } else {
       if (a.size() < b.size()) {
         a.resize(b.size(), 0);
@@ -543,18 +551,17 @@ public:
     this->is_negative = !this->is_negative;
   }
   void operator-=(signed int other) {
-    this->is_negative = !this->is_negative;
+    negate();
     *this += other;
-    this->is_negative = !this->is_negative;
+    negate();
   }
-  void operator*=(const CBigInt &other) {
-    OwnedDigits dst(this->size() + other.size(), 0);
-    mac3(dst, this->const_slice(), other.const_slice());
+  CBigInt operator*(const CBigInt &other) const {
+    OwnedDigits digits_(this->size() + other.size(), 0);
+    mac3(digits_, this->const_slice(), other.const_slice());
 
-    this->digits = dst;
-    this->is_negative = (is_negative == !other.is_negative);
-    normalize();
+    return CBigInt((is_negative == !other.is_negative), digits_);
   }
+  void operator*=(const CBigInt &other) { *this = *this * other; }
   void operator*=(Digit other) {
     Digit carry = mul_digit(digits, other);
     if (carry != 0) {
@@ -569,11 +576,6 @@ public:
     if (other < 0) {
       this->is_negative = !this->is_negative;
     }
-  }
-  CBigInt operator*(const CBigInt &other) const {
-    CBigInt copy = *this;
-    copy *= other;
-    return copy;
   }
   CBigInt operator+(const CBigInt &other) const {
     CBigInt copy = *this;
@@ -712,7 +714,7 @@ public:
   CBigInt &operator=(const char* a) { return *this = CBigInt(a); }
   CBigInt &operator=(const std::string& a) { return *this = CBigInt(a); }
   CBigInt &operator=(int a) { return *this = CBigInt(a); }
-  CBigInt &operator=(const CBigInt &a) { 
+  CBigInt &operator=(CBigInt a) { 
     this->digits = a.digits;
     this->is_negative = a.is_negative;
     return *this;
@@ -832,21 +834,18 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     ConstDigits y0 = y_split.first;
     ConstDigits y1 = y_split.second;
 
-    CBigInt z3{}, z2{}, z0{};
+    CBigInt z2{}, z0{};
 
     // z3 = (x1 + x0) * (y1 + y0)
     {
       z0.from_slice(x1);
-      z2.from_slice(x0);
-      z0 += z2;
+      z0 += x0;
 
       z2.from_slice(y1);
-      z3.from_slice(y0);
-      z2 += z3;
+      z2 += y0;
 
-      z3.make_zeros(z0.size() + z2.size());
-      mac3(z3.slice(), z0.slice(), z2.slice());
-      z3.normalize();
+      // do not need a temporary
+      mac3(out.start_at(b), z0.slice(), z2.slice());
     }
 
     // z2 = x1 * y1
@@ -854,19 +853,16 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     mac3(z2.slice(), x1, y1);
 
     // z0 = x0 * y0
-    z0.make_zeros(x0.size() + y0.size());
-    mac3(z0.slice(), x0, y0);
+    // do not need a temporary
+    mac3(out, x0, y0);
 
-    // x*y = z0
-    //     + (z2 << 2b)
-    //     + (z1 << b)
+    // x * y = z0
+    //       + (z2 << 2b)
+    //       + (z1 << b)
 
     Digit carry = 0;
 
-    carry |= add2(out, z0.slice());
     carry |= add2(out.start_at(2 * b), z2.slice());
-    // z1 = z3 - z2 - z0
-    carry |= add2(out.start_at(b), z3.slice());
     carry |= sub2(out.start_at(b), z2.slice());
     carry |= sub2(out.start_at(b), z0.slice());
 
@@ -896,12 +892,19 @@ static bool equalHex(const CBigInt &x, const char val[]) {
   return true;
 }
 
-// #include "fuzz.cpp"
+// #include "../out/fuzz.cpp"
 
 int main() {
   // fuzz();
 
   CBigInt a, b;
+
+  // clang-format off
+  a = "-300118455826901239556507011058463851256840079069238028630998411945275080583240292881092722543276138241013822851002327440631939599457641769554789156429312975175222587155486897451557578265835997016484730336182732522502786080717638534364349931879919580396123743800638983055654402773417305804636965515012336486600920162249522725427";
+  b = "54364011989512360557273557834972863976223745379889461879731809107419742390566048720446775379588806777864690329442051390550411059844315987671419779133732994722077968803367704549543517792019587905242167049881411307435901710495554754304527570657612096671677689977459451885496391607465783182890683853597290541663719615274721422142151202960741190642081872010163037351761808244163953787209320358933529987157301720669034834263185";
+  assert(equal(a * b, "-16315643330847594755244458961839452971109169279306151890631638170116096133291603625231835122745225366661383162799990749270920569088625657917769575370684947525238652361853477216368625834502309089190735907839197674937555747474210932984820015006083853363278640135644644057633993663793544327574211170495386881874252374079910963421983846909623830828227980629925238776067183048392895702025381908335319095097607688461151987394468084974847846923746599118733444041516272833488314198824266004383236792552291240485484937813947497763683139165643825985819575214694722678679138652713682865146802277269902303284640263244743977347736954603338302601586623606792530241951820440702165081551554452306765001418951753378477329871814696928312496561680510526921162609504995"));
+  // clang-format on
+
   a = "115";
   assert(equalHex(a, "73"));
 
