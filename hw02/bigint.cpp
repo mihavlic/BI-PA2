@@ -886,34 +886,36 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     Digits z0 = alloc.allocate(z0_size);
     Digits z2 = alloc.allocate(z2_size);
 
-    Digit carry = 0;
+    {
+      Digit carry = 0;
 
-    z0.copy_from(x1);
-    // (x1 + x0)
-    carry |= add2(z0.clamp_size(z0_add_size), x0);
+      z0.copy_from(x1);
+      // (x1 + x0)
+      carry |= add2(z0.clamp_size(z0_add_size), x0);
 
-    z2.copy_from(y1);
-    // (y1 + y0)
-    carry |= add2(z2.clamp_size(z2_add_size), y0);
+      z2.copy_from(y1);
+      // (y1 + y0)
+      carry |= add2(z2.clamp_size(z2_add_size), y0);
 
-    // z3 = (x1 + x0) * (y1 + y0)
-    mac3(out.start_at(b), z0, z2);
+      // z3 = (x1 + x0) * (y1 + y0)
+      mac3(out.start_at(b), z0, z2);
 
-    // z2 = x1 * y1
-    z2.clear();
-    mac3(z2, x1, y1);
+      // z2 = x1 * y1
+      z2.clear();
+      mac3(z2, x1, y1);
 
-    // z0 = x0 * y0
-    z0.clear();
-    mac3(z0, x0, y0);
+      // z0 = x0 * y0
+      z0.clear();
+      mac3(z0, x0, y0);
 
-    // x * y = ...
-    carry |= add2(out, z0);
-    carry |= add2(out.start_at(2 * b), z2);
-    carry |= sub2(out.start_at(b), z2);
-    carry |= sub2(out.start_at(b), z0);
+      // x * y = ...
+      carry |= add2(out, z0);
+      carry |= add2(out.start_at(2 * b), z2);
+      carry |= sub2(out.start_at(b), z2);
+      carry |= sub2(out.start_at(b), z0);
 
-    assert(carry == 0);
+      assert(carry == 0);
+    }
 
     alloc.free(z0);
     alloc.free(z2);
