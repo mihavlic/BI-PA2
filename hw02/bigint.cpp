@@ -150,8 +150,16 @@ public:
   }
 };
 
+// #define DIGIT64
+
+#ifdef DIGIT64
+using Digit = uint64_t;
+using DoubleDigit = __uint128_t;
+#else
 using Digit = uint32_t;
 using DoubleDigit = uint64_t;
+#endif
+
 constexpr Digit DIGIT_BITS = sizeof(Digit) * 8;
 
 using Digits = Slice<Digit>;
@@ -167,20 +175,20 @@ inline DoubleDigit double_pack(Digit high, Digit low) {
 }
 
 // return a + b, overflow in carry
-inline Digit add_carry_u32(uint32_t a, uint32_t b, uint32_t *carry) {
-  uint32_t s;
-  uint32_t c1 = __builtin_add_overflow(a, b, &s);
-  uint32_t c2 = __builtin_add_overflow(s, *carry, &s);
+inline Digit add_carry(Digit a, Digit b, Digit *carry) {
+  Digit s;
+  Digit c1 = __builtin_add_overflow(a, b, &s);
+  Digit c2 = __builtin_add_overflow(s, *carry, &s);
   *(carry) = c1 | c2;
 
   return s;
 }
 
 // return a - b, overflow in carry
-inline Digit sub_carry_u32(uint32_t a, uint32_t b, uint32_t *carry) {
-  uint32_t s;
-  uint32_t c1 = __builtin_sub_overflow(a, b, &s);
-  uint32_t c2 = __builtin_sub_overflow(s, *carry, &s);
+inline Digit sub_carry(Digit a, Digit b, Digit *carry) {
+  Digit s;
+  Digit c1 = __builtin_sub_overflow(a, b, &s);
+  Digit c2 = __builtin_sub_overflow(s, *carry, &s);
 
   *(carry) = c1 | c2;
   return s;
@@ -188,7 +196,7 @@ inline Digit sub_carry_u32(uint32_t a, uint32_t b, uint32_t *carry) {
 
 // x = carry + a + b * c
 // return low_bits(x), carry = high_bits(carry) >> DIGIT_BITS
-inline Digit mac_carry_u32(Digit a, Digit b, Digit c, Digit *acc) {
+inline Digit mac_carry(Digit a, Digit b, Digit c, Digit *acc) {
   DoubleDigit d = (DoubleDigit)*acc;
   d += (DoubleDigit)a;
   d += (DoubleDigit)b * (DoubleDigit)c;
@@ -217,11 +225,11 @@ Digit add2(Digits a, ConstDigits b) {
   size_t i = 0;
 
   for (; i < b_len; i++) {
-    a[i] = add_carry_u32(a[i], b[i], &carry);
+    a[i] = add_carry(a[i], b[i], &carry);
   }
 
   for (; i < a_len && carry != 0; i++) {
-    a[i] = add_carry_u32(a[i], 0, &carry);
+    a[i] = add_carry(a[i], 0, &carry);
   }
 
   return carry;
@@ -236,11 +244,11 @@ Digit sub2(Digits a, ConstDigits b) {
   size_t i = 0;
 
   for (; i < len; i++) {
-    a[i] = sub_carry_u32(a[i], b[i], &carry);
+    a[i] = sub_carry(a[i], b[i], &carry);
   }
 
   for (; i < a_len && carry != 0; i++) {
-    a[i] = sub_carry_u32(a[i], 0, &carry);
+    a[i] = sub_carry(a[i], 0, &carry);
   }
 
   return carry;
@@ -255,7 +263,7 @@ void twos_complement(Digits a) {
 
   for (; i < len; i++) {
     a[i] = ~a[i];
-    a[i] = add_carry_u32(a[i], 0, &carry);
+    a[i] = add_carry(a[i], 0, &carry);
   }
 }
 
@@ -265,7 +273,7 @@ Digit add_digit(Digits a, Digit b) {
 
   Digit carry = b;
   for (size_t i = 0; i < len && carry != 0; i++) {
-    a[i] = add_carry_u32(a[i], 0, &carry);
+    a[i] = add_carry(a[i], 0, &carry);
   }
 
   return carry;
@@ -277,7 +285,7 @@ Digit sub_digit(Digits a, Digit b) {
 
   Digit carry = b;
   for (size_t i = 0; i < len && carry != 0; i++) {
-    a[i] = sub_carry_u32(a[i], 0, &carry);
+    a[i] = sub_carry(a[i], 0, &carry);
   }
 
   return carry;
@@ -306,7 +314,7 @@ Digit mac_digit(Digits a, ConstDigits b, Digit c) {
 
   Digit carry = 0;
   for (size_t i = 0; i < b_len; i++) {
-    a[i] = mac_carry_u32(a[i], b[i], c, &carry);
+    a[i] = mac_carry(a[i], b[i], c, &carry);
   }
 
   if (carry != 0) {
@@ -321,10 +329,15 @@ inline Digit div_wide(Digit a, Digit b, Digit *rem) {
   DoubleDigit lhs = double_pack(*rem, a);
   DoubleDigit rhs = (DoubleDigit)b;
 
+#ifdef DIGIT64
+  *rem = (Digit)(lhs % rhs);
+  return (Digit)(lhs / rhs);
+#else
   auto q_r = std::ldiv(lhs, rhs);
 
   *rem = (Digit)q_r.rem;
   return (Digit)q_r.quot;
+#endif
 }
 
 // divides a, returns rem
@@ -622,15 +635,15 @@ public:
     copy.negate();
     return copy;
   }
-  std::string decode_le(Digit chunk_size, Digit digit_base,
+  std::string decode_le(Digit digit_base, Digit chunk_digits, Digit chunk_shift,
                         const char alphabet[]) const {
     std::string decoded{};
     CBigInt copy = *this;
     copy.normalize();
 
     while (copy.size() > 1) {
-      Digit r = copy.div_rem(chunk_size);
-      for (Digit i = 1; i < digit_base; i++) {
+      Digit r = copy.div_rem(chunk_shift);
+      for (Digit i = 0; i < chunk_digits; i++) {
         Digit quot = r / digit_base;
         Digit rem = r % digit_base;
         decoded.push_back(alphabet[rem]);
@@ -660,11 +673,13 @@ public:
     std::string decoded{};
     ConstDigits slice = normalize_slice(digits);
 
+    constexpr size_t DIGITS_IN_DIGIT = DIGIT_BITS / 4;
+
     int i = 0;
     int end = (int)size() - 1;
     for (; i < end; i++) {
       Digit r = slice[i];
-      for (int a = 0; a < 8; a++) {
+      for (size_t a = 0; a < DIGITS_IN_DIGIT; a++) {
         decoded.push_back(alphabet[r % 16]);
         r /= 16;
       }
@@ -691,7 +706,7 @@ public:
     if (stream.flags() & std::ios::hex) {
       decoded = big.decode_hex_le("0123456789abcdef");
     } else {
-      decoded = big.decode_le(1'000'000'000, 10, "0123456789");
+      decoded = big.decode_le(10, 9, 1'000'000'000, "0123456789");
     }
     std::reverse(decoded.begin(), decoded.end());
 
@@ -837,17 +852,29 @@ private:
 void mac3(Digits out, ConstDigits x, ConstDigits y) {
   x = normalize_slice(x);
   y = normalize_slice(y);
+
+  // size_t x_start = 0;
+  // while (x_start < x.size() && x[x_start] == 0) {
+  //   x_start++;
+  // }
+
+  // size_t y_start = 0;
+  // while (y_start < y.size() && y[y_start] == 0) {
+  //   y_start++;
+  // }
+
+  // size_t common = std::min(x_start, y_start);
+  // out = out.start_at(common);
+  // x = x.start_at(common);
+  // y = y.start_at(common);
+
   out = out.clamp_size(x.size() + y.size());
 
   if (x.size() > y.size()) {
     std::swap(x, y);
   }
 
-  if (x.empty()) {
-    return;
-  }
-
-  if (x.size() <= 32) {
+  if (x.size() <= 64) {
     size_t x_size = x.size();
     for (size_t i = 0; i < x_size; i++) {
       Digit overflow = mac_digit(out.start_at(i), y, x[i]);
@@ -875,7 +902,7 @@ void mac3(Digits out, ConstDigits x, ConstDigits y) {
     //       + z2 << 2b
     //       + (z3 - z2 - z0) << b
 
-    StackSliceAllocator<Digit, 256> alloc{};
+    StackSliceAllocator<Digit, 512> alloc{};
 
     size_t z0_add_size = std::max(x0.size(), x1.size()) + 1;
     size_t z0_size = std::max(z0_add_size, x0.size() + y0.size());
