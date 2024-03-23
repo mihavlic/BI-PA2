@@ -364,6 +364,20 @@ Digit parse_digit_decimal(const char *str, size_t len) {
   return digit;
 }
 
+Digit parse_digit_hexadecimal(const char *str, size_t len) {
+  Digit digit = 0;
+  for (size_t i = 0; i < len; i++) {
+    digit *= 16;
+    Digit value = str[i] - '0';
+    if (value > 9) {
+      value = 10 + (str[i] - 'a');
+    }
+    digit += value;
+  }
+
+  return digit;
+}
+
 ConstDigits normalize_slice(ConstDigits digits) {
   if (digits.empty()) {
     return digits;
@@ -417,40 +431,78 @@ public:
       view.next();
     }
 
+    bool is_hex = false;
+    if (view.size() >= 2) {
+      if (view[0] == '0' && view[1] == 'x') {
+        view.next_by(2);
+        is_hex = true;
+      }
+    }
+
     if (view.empty()) {
       throw std::invalid_argument("Empty");
     }
 
-    // check that all characters are 0-9
-    ConstSlice<char> copy = view;
-    for (char c : copy) {
-      if (!('0' <= c && c <= '9')) {
-        throw std::invalid_argument("Not 0-9");
+    if (is_hex) {
+      // check that all characters are 0-9
+      ConstSlice<char> copy = view;
+      for (char c : copy) {
+        if (!(('0' <= c && c <= '9') || ('a' <= c && c <= 'f'))) {
+          throw std::invalid_argument("Not 0-9a-f");
+        }
       }
-    }
 
-    // estimate number of bits needed to store the number
-    // assume the worst case that all digits are 9
-    double bits = std::log2(10.0) * view.size();
-    size_t big_digits = std::ceil(bits / DIGIT_BITS);
-    this->digits.reserve(big_digits);
+      // estimate number of bits needed to store the number
+      // assume the worst case that all digits are 9
+      double bits = view.size() * 4;
+      size_t big_digits = (bits + (DIGIT_BITS - 1)) / DIGIT_BITS;
+      this->digits.reserve(big_digits);
 
-    Digit chunk_size = 9;             // 10^9 fits in 2^32, 10^10 does not
-    Digit chunk_base = 1'000'000'000; // 10^power
+      constexpr size_t chunk_size = DIGIT_BITS / 4;
 
-    size_t head = view.size() % chunk_size;
-    Digit digit = parse_digit_decimal(view.begin(), head);
-    view.next_by(head);
+      size_t head = view.size() % chunk_size;
 
-    this->digits.push_back(digit);
+      size_t i = view.size();
+      while (i > head) {
+        i -= chunk_size;
+        Digit digit = parse_digit_hexadecimal(view.begin() + i, chunk_size);
+        digits.push_back(digit);
+      }
 
-    while (!view.empty()) {
-      Digit digit = parse_digit_decimal(view.begin(), chunk_size);
+      Digit digit = parse_digit_hexadecimal(view.begin(), head);
+      this->digits.push_back(digit);
+    } else {
+      // check that all characters are 0-9
+      ConstSlice<char> copy = view;
+      for (char c : copy) {
+        if (!('0' <= c && c <= '9')) {
+          throw std::invalid_argument("Not 0-9");
+        }
+      }
 
-      *this *= chunk_base;
-      *this += digit;
+      // estimate number of bits needed to store the number
+      // assume the worst case that all digits are 9
+      double bits = std::log2(10.0) * view.size();
+      size_t big_digits = std::ceil(bits / DIGIT_BITS);
+      this->digits.reserve(big_digits);
 
-      view.next_by(chunk_size);
+      Digit chunk_size = 9;             // 10^9 fits in 2^32, 10^10 does not
+      Digit chunk_base = 1'000'000'000; // 10^power
+
+      size_t head = view.size() % chunk_size;
+      Digit digit = parse_digit_decimal(view.begin(), head);
+      view.next_by(head);
+
+      this->digits.push_back(digit);
+
+      while (!view.empty()) {
+        Digit digit = parse_digit_decimal(view.begin(), chunk_size);
+
+        *this *= chunk_base;
+        *this += digit;
+
+        view.next_by(chunk_size);
+      }
     }
 
     normalize();
@@ -725,6 +777,17 @@ public:
       stream.get();
     }
 
+    c = stream.peek();
+    if (c == '0') {
+      string.push_back(c);
+      stream.get();
+      c = stream.peek();
+      if (c == 'x') {
+        string.push_back(c);
+        stream.get();
+      }
+    }
+
     while (true) {
       char c = stream.peek();
       if ('0' <= c && c <= '9') {
@@ -977,6 +1040,10 @@ int main() {
   // fuzz();
 
   CBigInt a, b;
+
+  a = "0xf";
+  equal(a, "15");
+  equalHex(a, "f");
 
   // clang-format off
   a = "-300118455826901239556507011058463851256840079069238028630998411945275080583240292881092722543276138241013822851002327440631939599457641769554789156429312975175222587155486897451557578265835997016484730336182732522502786080717638534364349931879919580396123743800638983055654402773417305804636965515012336486600920162249522725427";
