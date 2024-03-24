@@ -1145,8 +1145,7 @@ static bool equal(const CBigInt& x, const char val[]) {
     oss << x;
     if (oss.str() != val) {
         std::cout << "expected: " << val << "\ngot:      " << oss.str()
-                  << std::endl
-                  << std::hex;
+                  << std::endl;
         return false;
     }
     return true;
@@ -1157,8 +1156,7 @@ static bool equalHex(const CBigInt& x, const char val[]) {
     oss << std::hex << x;
     if (oss.str() != val) {
         std::cout << "expected: " << val << "\ngot:      " << oss.str()
-                  << std::endl
-                  << std::hex;
+                  << std::endl;
         return false;
     }
     return true;
