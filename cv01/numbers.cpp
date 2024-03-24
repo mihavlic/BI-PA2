@@ -1,12 +1,13 @@
 #include <algorithm>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <vector>
 
-bool ends_with(std::string const & value, std::string const & ending)
-{
-    if (ending.size() > value.size()) return false;
+bool ends_with(std::string const& value, std::string const& ending) {
+    if (ending.size() > value.size()) {
+        return false;
+    }
     return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
 }
 
@@ -22,7 +23,7 @@ int main() {
         return 1;
     }
 
-    std::vector<int> numbers{};
+    std::vector<int> numbers {};
     for (int i = 0; i < count; i++) {
         int number = 0;
         std::cin >> number;
