@@ -66,79 +66,167 @@ class Part {
         size(strlen(str)),
         data(RcString(str, size)) {}
 
-    void remove_start(unsigned count) {
-        assert(count <= size);
-        offset += count;
-        size -= count;
+    Part split(unsigned at) {
+        assert(at < size);
+
+        Part right(*this);
+        right.offset += at;
+        right.size -= at;
+
+        this->size = at;
+
+        return right;
     }
 
-    void remove_end(unsigned count) {
-        assert(count <= size);
+    void remove_left(unsigned count) {
+        assert(count < size);
+        offset += count;
         size -= count;
     }
 
     bool empty() const {
         return size == 0;
     }
+
+    unsigned len() const {
+        return size;
+    }
 };
 
-struct ListElement {
-    Part self;
-    ListElement* next = nullptr;
-};
-
-class List {
-    ListElement* head;
+template<typename T>
+class Vector {
+    size_t m_size = 0;
+    size_t m_capacity = 0;
+    T* m_data = nullptr;
 
   public:
-    List() {}
+    Vector() {}
 
-    List(List&& a) : head(a.head) {
-        a.head = nullptr;
+    Vector(Vector& copy) {
+        m_size = copy.m_size;
+        m_capacity = copy.m_size;
+        m_data = (T*)(malloc(m_size * sizeof(T)));
+
+        memcpy(m_data, copy.m_data, m_size * sizeof(T));
     }
 
-    List(List& a) {
-        ListElement** next = &head;
-        ListElement* cursor = a.head;
-        while (cursor) {
-            ListElement* copy = new ListElement(*cursor);
-            *next = copy;
+    Vector(Vector&& move) {
+        m_size = move.m_size;
+        m_capacity = move.m_size;
+        m_data = move.m_data;
 
-            next = &copy->next;
-            cursor = cursor->next;
+        move.m_size = 0;
+        move.m_capacity = 0;
+        move.m_data = nullptr;
+    }
+
+    Vector(T value) : Vector() {
+        this->push(value);
+    }
+
+    ~Vector() {
+        for (size_t i = 0; i < m_size; i++) {
+            m_data[i].~T();
+        }
+        free(m_data);
+    }
+
+    size_t size() const {
+        return m_size;
+    }
+
+    void ensure_capacity(size_t new_size) {
+        if (new_size > m_capacity) {
+            size_t new_capacity = m_capacity * 2;
+            if (new_size > new_capacity) {
+                new_capacity = new_size;
+            }
+
+            T* new_data = (T*)malloc(new_size * sizeof(T));
+            std::memcpy(new_data, m_data, m_size * sizeof(T));
+
+            free(m_data);
+            m_data = new_data;
+            m_capacity = new_capacity;
         }
     }
 
-    List(Part value) : head(new ListElement {value, nullptr}) {}
+    void push(T value) {
+        size_t new_size = m_size + 1;
+        ensure_capacity(new_size);
+        m_data[m_size] = value;
 
-    ~List() {
-        ListElement* cursor = head;
-        while (cursor) {
-            ListElement* tmp = cursor;
-            cursor = tmp->next;
-            free(tmp);
+        m_size = new_size;
+    }
+
+    void
+    insert(size_t dst_start, size_t dst_len, const T* data, size_t data_len) {
+        if (data_len > dst_len) {
+            ensure_capacity(m_size + data_len - dst_len);
         }
+
+        for (int i = 0; i < dst_len; i++) {
+            m_data[dst_start + i]->~T();
+        }
+
+        if (dst_len > 0) {
+            memmove(
+                m_data + dst_start + data_len,
+                m_data + dst_start + dst_len,
+                (m_size - (dst_start + dst_len)) * sizeof(T)
+            );
+        }
+
+        for (int i = 0; i < data_len; i++) {
+            new (m_data[dst_start + i]) T(data[i]);
+        }
+    }
+
+    void clear() {
+        m_size = 0;
+    }
+
+    T& operator[](size_t pos) {
+        assert(pos < m_size);
+        return m_data[pos];
+    }
+
+    const T& operator[](size_t pos) const {
+        assert(pos < m_size);
+        return m_data[pos];
+    }
+
+    template<typename F>
+    void retain(F lambda) {
+        size_t out = 0;
+        for (size_t i = 0; i < m_size; i++) {
+            T& el = m_data[i];
+            if (lambda(el)) {
+                memmove(m_data + out, m_data + i, sizeof(T));
+                out++;
+            } else {
+                el.~T();
+            }
+        }
+        m_size = out;
     }
 };
 
 class CPatchStr {
-    List parts;
+    Vector<Part> parts;
 
   public:
     CPatchStr();
 
-    CPatchStr(CPatchStr& a) : parts(a.parts) {}
-
-    CPatchStr(CPatchStr&& a) : parts(std::move(a.parts)) {}
-
-    CPatchStr(const char* str) : parts(List(Part(str))) {}
+    CPatchStr(const char* str) : parts(Part(str)) {}
 
     void operator=(CPatchStr other) {
         *this = other;
     }
 
     void operator=(const char* str) {
-        *this = CPatchStr(str);
+        parts.clear();
+        parts.push(Part(str));
     }
 
     // copy constructor
@@ -148,14 +236,60 @@ class CPatchStr {
         return "";
     }
 
-    CPatchStr& append(const CPatchStr& src);
+    CPatchStr& append(const CPatchStr& src) {}
 
-    CPatchStr& insert(size_t pos, const CPatchStr& src);
+    CPatchStr& insert(size_t pos, const CPatchStr& src) {
+        unsigned offset = 0;
+        ListElement* prev = nullptr;
+        ListElement* current = head;
+
+        while (current && pos < offset) {
+            unsigned part_end = offset + current->data.len();
+
+            // pos is in the middle of a part, need to split it
+            if (pos < part_end) {
+                Part right_part = current->data.split(pos - offset);
+                ListElement* right =
+                    new ListElement {.data = right_part, .next = current->next};
+
+                current->next = nullptr;
+                prev = current;
+                current = right;
+
+                break;
+            }
+
+            offset = part_end;
+            prev = current;
+            current = current->next;
+        }
+
+        if (pos > offset) {
+            throw std::out_of_range("bungus");
+        }
+
+        ListElement** pdst = &prev->next;
+        ListElement* psrc = src.head;
+
+        while (psrc) {
+            ListElement* copy = new ListElement(*psrc);
+            *pdst = copy;
+
+            pdst = &copy->next;
+            psrc = psrc->next;
+        }
+
+        *pdst = current;
+
+        return *this;
+    }
+
     CPatchStr& remove(size_t from, size_t len);
     char* toStr() const;
 };
 
 #ifndef __PROGTEST__
+
 bool stringMatch(char* str, const char* expected) {
     bool res = std::strcmp(str, expected) == 0;
     if (!res) {
