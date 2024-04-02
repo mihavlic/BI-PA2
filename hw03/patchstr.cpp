@@ -1,12 +1,9 @@
 #ifndef __PROGTEST__
     #include <cassert>
-    #include <cmath>
     #include <cstdio>
     #include <cstdlib>
     #include <cstring>
-    #include <iomanip>
     #include <iostream>
-    #include <memory>
     #include <stdexcept>
 #endif /* __PROGTEST__ */
 
