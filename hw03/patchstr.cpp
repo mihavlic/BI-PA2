@@ -1,3 +1,4 @@
+#include <memory>
 #ifndef __PROGTEST__
     #include <cassert>
     #include <cstdio>
@@ -6,51 +7,6 @@
     #include <iostream>
     #include <stdexcept>
 #endif /* __PROGTEST__ */
-
-class CPatchStr;
-
-class RcString {
-    unsigned* count;
-
-  public:
-    RcString(const char* str, size_t len) {
-        size_t bytes = len + sizeof(unsigned);
-        count = (unsigned*)malloc(bytes);
-
-        *count = 1;
-        memcpy(count + 1, str, len);
-    }
-
-    RcString(const RcString& a) : count(a.count) {
-        if (count) {
-            (*count)++;
-        }
-    }
-
-    RcString(RcString&& a) : count(a.count) {
-        a.count = nullptr;
-    }
-
-    ~RcString() {
-        if (count) {
-            if (--(*count) == 0) {
-                free(count);
-            }
-        }
-    }
-
-    unsigned refcount() const {
-        if (count) {
-            return *count;
-        } else {
-            return 0;
-        }
-    }
-
-    const char* get() const {
-        return (const char*)(count + 1);
-    }
-};
 
 struct Range {
     size_t start;
@@ -83,7 +39,7 @@ struct Range {
 class Part {
     size_t offset;
     size_t size;
-    RcString data;
+    std::shared_ptr<char[]> data;
 
   public:
     Part(Part&& move) :
@@ -96,10 +52,10 @@ class Part {
         size(copy.size),
         data(copy.data) {}
 
-    Part(const char* str) :
-        offset(0),
-        size(strlen(str)),
-        data(RcString(str, size)) {}
+    Part(const char* str) : offset(0), size(strlen(str)), data(nullptr) {
+        data = std::shared_ptr<char[]>(new char[size]);
+        memcpy(data.get(), str, size);
+    }
 
     void shrink_to(Range range) {
         assert(range.start < size);
