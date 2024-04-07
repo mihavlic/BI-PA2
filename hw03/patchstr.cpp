@@ -1,40 +1,12 @@
-#include <memory>
 #ifndef __PROGTEST__
     #include <cassert>
     #include <cstdio>
     #include <cstdlib>
     #include <cstring>
     #include <iostream>
+    #include <memory>
     #include <stdexcept>
 #endif /* __PROGTEST__ */
-
-struct Range {
-    size_t start;
-    size_t end;
-
-    Range() : start(0), end(0) {}
-
-    Range(size_t start_, size_t end_) : start(start_), end(end_) {}
-
-    bool empty() const {
-        return end <= start;
-    }
-
-    size_t size() const {
-        if (empty()) {
-            return 0;
-        }
-        return end - start;
-    }
-
-    Range subtract_base(size_t base) {
-        return Range {start - base, end - base};
-    }
-
-    bool operator==(const Range& other) {
-        return start == other.start && end == other.end;
-    }
-};
 
 class Part {
     size_t offset;
@@ -42,10 +14,7 @@ class Part {
     std::shared_ptr<char[]> data;
 
   public:
-    Part(Part&& move) :
-        offset(move.offset),
-        size(move.size),
-        data(std::move(move.data)) {}
+    Part() : offset(0), size(0), data(nullptr) {}
 
     Part(const Part& copy) :
         offset(copy.offset),
@@ -53,29 +22,30 @@ class Part {
         data(copy.data) {}
 
     Part(const char* str) : offset(0), size(strlen(str)), data(nullptr) {
-        data = std::shared_ptr<char[]>(new char[size]);
+        data = std::shared_ptr<char[]>(new char[size + 1]);
         memcpy(data.get(), str, size);
+        data[size] = 0;
     }
 
-    void shrink_to(Range range) {
-        assert(range.start < size);
-        assert(range.end <= size);
-
-        offset += range.start;
-        size = range.size();
-    }
-
-    Part split(size_t at) {
-        assert(at < size);
+    // return the left part of the split
+    Part split_left(size_t at) {
         assert(at > 0);
 
-        Part right(*this);
-        right.offset += at;
-        right.size -= at;
+        Part copy(*this);
+        copy.size = at;
 
-        this->size = at;
+        return copy;
+    }
 
-        return right;
+    // return the right part of the split
+    Part split_right(size_t at) {
+        assert(at < size);
+
+        Part copy(*this);
+        copy.offset += at;
+        copy.size -= at;
+
+        return copy;
     }
 
     bool empty() const {
@@ -91,446 +61,297 @@ class Part {
     }
 };
 
-template<typename T>
-void copy_into_unitialized(T* dst, const T* src, size_t len) {
-    if (src == dst || len == 0) {
-        return;
-    }
+struct Node;
+using SharedNode = std::shared_ptr<Node>;
 
-    if (dst > src) {
-        for (size_t i = len; i--;) {
-            new (dst + i) T(src[i]);
-        }
-    } else {
-        for (size_t i = 0; i < len; i++) {
-            new (dst + i) T(src[i]);
-        }
-    }
-}
+void make_unique(SharedNode* ptr);
 
-template<typename T>
-void move_into_unitialized(T* dst, T* src, size_t len) {
-    if (src == dst || len == 0) {
-        return;
-    }
+struct Node {
+    SharedNode left = nullptr;
+    SharedNode right = nullptr;
+    Part leaf_data {};
+    unsigned left_size = 0;
+    unsigned right_size = 0;
 
-    if (dst > src) {
-        for (size_t i = len; i--;) {
-            new (dst + i) T(std::move(src[i]));
-        }
-    } else {
-        for (size_t i = 0; i < len; i++) {
-            new (dst + i) T(std::move(src[i]));
-        }
-    }
-}
+    Node(Part data) : leaf_data(data), left_size(data.len()) {}
 
-template<typename T>
-class Vector {
-    size_t m_size = 0;
-    size_t m_capacity = 0;
-    T* m_data = nullptr;
+    Node(const char* str) : Node(Part(str)) {}
 
-  public:
-    Vector() {}
+    Node(SharedNode left_, SharedNode right_) :
+        left(left_),
+        right(right_),
+        left_size(left->size()),
+        right_size(right->size()) {}
 
-    Vector(const Vector& copy) {
-        m_size = copy.m_size;
-        m_capacity = copy.m_size;
-        m_data = (T*)(malloc(m_size * sizeof(T)));
+    Node(SharedNode left_, SharedNode middle, SharedNode right_) :
+        Node(left_, std::make_shared<Node>(Node(middle, right_))) {}
 
-        for (size_t i = 0; i < copy.m_size; i++) {
-            new (m_data + i) T(copy[i]);
-        }
-    }
-
-    Vector(Vector&& move) {
-        m_size = move.m_size;
-        m_capacity = move.m_size;
-        m_data = move.m_data;
-
-        move.m_size = 0;
-        move.m_capacity = 0;
-        move.m_data = nullptr;
-    }
-
-    Vector(T value) : Vector() {
-        this->push(value);
-    }
-
-    ~Vector() {
-        for (size_t i = 0; i < m_size; i++) {
-            m_data[i].~T();
-        }
-        free(m_data);
-    }
-
-    void operator=(const Vector<T>& other) {
-        if (this != &other) {
-            clear();
-            append(other);
-        }
-    }
-
-    size_t size() const {
-        return m_size;
-    }
-
-    void ensure_capacity(size_t new_size) {
-        if (new_size > m_capacity) {
-            size_t new_capacity = m_capacity * 2;
-            if (new_size > new_capacity) {
-                new_capacity = new_size;
-            }
-
-            T* new_data = (T*)malloc(new_capacity * sizeof(T));
-            move_into_unitialized(new_data, m_data, m_size);
-
-            free(m_data);
-            m_data = new_data;
-            m_capacity = new_capacity;
-        }
-    }
-
-    void _insert_internal(
-        size_t dst_start,
-        size_t dst_len,
-        const T* data,
-        size_t data_len,
-        size_t new_size
-    ) {
-        for (size_t i = 0; i < dst_len; i++) {
-            m_data[dst_start + i].~T();
-        }
-
-        auto dst = dst_start + data_len;
-        auto src = dst_start + dst_len;
-        move_into_unitialized(
-            m_data + dst,
-            m_data + src,
-            m_size - (dst_start + dst_len)
-        );
-
-        copy_into_unitialized(m_data + dst_start, data, data_len);
-
-        m_size = new_size;
-    }
-
-    void
-    insert(size_t dst_start, size_t dst_len, const T* data, size_t data_len) {
-        assert(dst_start + dst_len <= m_size);
-
-        size_t new_size = (m_size + data_len) - dst_len;
-        ensure_capacity(new_size);
-
-        _insert_internal(dst_start, dst_len, data, data_len, new_size);
-    }
-
-    void insert(size_t dst_start, size_t dst_len, const Vector<T>& vec) {
-        assert(dst_start + dst_len <= m_size);
-
-        size_t new_size = (m_size + vec.size()) - dst_len;
-        ensure_capacity(new_size);
-
-        _insert_internal(dst_start, dst_len, vec.begin(), vec.size(), new_size);
-    }
-
-    void insert(size_t dst_pos, const T& value) {
-        insert(dst_pos, 0, &value, 1);
-    }
-
-    void append(const T* data, size_t data_len) {
-        insert(m_size, 0, data, data_len);
-    }
-
-    void append(const Vector<T>& vec) {
-        insert(m_size, 0, vec);
-    }
-
-    void push(T value) {
-        size_t new_size = m_size + 1;
-        ensure_capacity(new_size);
-        new (m_data + m_size) T(std::move(value));
-
-        m_size = new_size;
-    }
-
-    void clear() {
-        for (T& part : *this) {
-            part.~T();
-        }
-        m_size = 0;
-    }
-
-    void remove(size_t pos) {
-        assert(pos < m_size);
-        m_data[pos].~T();
-
-        move_into_unitialized(
-            m_data + pos,
-            m_data + pos + 1,
-            (m_size - pos) - 1
-        );
-
-        m_size -= 1;
-    }
-
-    T& operator[](size_t pos) {
-        assert(pos < m_size);
-        return m_data[pos];
-    }
-
-    const T& operator[](size_t pos) const {
-        assert(pos < m_size);
-        return m_data[pos];
-    }
-
-    T* begin() {
-        return m_data;
-    }
-
-    T* end() {
-        return m_data + m_size;
-    }
-
-    const T* begin() const {
-        return m_data;
-    }
-
-    const T* end() const {
-        return m_data + m_size;
+    unsigned size() const {
+        return left_size + right_size;
     }
 };
 
-size_t subtract_ranges(const Range& a, const Range& b, Range out[2]) {
-    if (a.empty()) {
-        return 0;
+SharedNode concat2(SharedNode left, SharedNode right) {
+    if (!left) {
+        return right;
     }
-    if (b.empty() || (a.start < b.start && a.end <= b.start)
-        || (b.start < a.start && b.end <= a.start)) {
-        // doesn't overlap
-        out[0] = a;
-        return 1;
+    if (!right) {
+        return left;
     }
-    if ((b.start <= a.start && a.end <= b.end)) {
-        // overlaps completely
-        return 0;
+    return std::make_shared<Node>(left, right);
+}
+
+SharedNode concat3(SharedNode left, SharedNode middle, SharedNode right) {
+    if (!left) {
+        return concat2(middle, right);
     }
-    if (a.start <= b.start && b.start < a.end && a.end <= b.end) {
-        // overlaps the end
-        out[0] = Range {a.start, b.start};
-        return 1;
+    if (!middle) {
+        return concat2(left, right);
     }
-    if (b.start <= a.start && a.start < b.end && b.end <= a.end) {
-        // overlaps the start
-        out[0] = Range {b.end, a.end};
-        return 1;
+    if (!right) {
+        return concat2(left, middle);
     }
-    {
-        // somewhere in the middle
-        out[0] = Range {a.start, b.start};
-        out[1] = Range {b.end, a.end};
-        return 2;
+    return std::make_shared<Node>(left, middle, right);
+}
+
+// find the node that covers the entire range
+const SharedNode*
+node_covering(const SharedNode& self, size_t start, size_t end) {
+    unsigned total_len = self->size();
+    if (start < total_len && end <= total_len) {
+        const SharedNode* child = nullptr;
+        if (self->left && (child = node_covering(self->left, start, end))) {
+            return child;
+        }
+        start -= self->left_size;
+        end -= self->left_size;
+        if (self->right && (child = node_covering(self->right, start, end))) {
+            return child;
+        }
+        return &self;
+    } else {
+        return nullptr;
     }
 }
 
-Range intersect_ranges(const Range& a, const Range& b) {
-    return Range(std::max(a.start, b.start), std::min(a.end, b.end));
+SharedNode split(const SharedNode& self, unsigned at, bool keep_left) {
+    unsigned len = self->left_size;
+
+    if (!self->left && !self->right) {
+        SharedNode left = nullptr;
+        if (keep_left && at > 0) {
+            left = std::make_shared<Node>(Node(self->leaf_data.split_left(at)));
+        }
+
+        SharedNode right = nullptr;
+        if (!keep_left && at < len) {
+            right =
+                std::make_shared<Node>(Node(self->leaf_data.split_right(at)));
+        }
+
+        if (keep_left) {
+            return left;
+        } else {
+            return right;
+        }
+    }
+
+    if (at < len) {
+        SharedNode child = split(self->left, at, keep_left);
+        if (keep_left) {
+            return child;
+        } else {
+            return concat2(child, self->right);
+        }
+    } else {
+        SharedNode child = split(self->right, at - len, keep_left);
+        if (keep_left) {
+            return concat2(self->left, child);
+        } else {
+            return child;
+        }
+    }
 }
 
-void test_subtract_ranges() {
-    Range empty1(0, 0);
-    Range empty2(1, 1);
-    Range empty3(2, 1);
+SharedNode insert_node(const SharedNode& self, unsigned at, SharedNode what) {
+    unsigned len = self->left_size;
 
-    Range out[2];
-    assert(subtract_ranges(empty1, empty1, out) == 0);
-    assert(subtract_ranges(empty2, empty1, out) == 0);
-    assert(subtract_ranges(empty1, empty2, out) == 0);
-    assert(subtract_ranges(empty1, empty3, out) == 0);
-    assert(subtract_ranges(empty3, empty3, out) == 0);
+    if (!self->left && !self->right) {
+        SharedNode left = nullptr;
+        if (at > 0) {
+            left = std::make_shared<Node>(Node(self->leaf_data.split_left(at)));
+        }
 
-    Range a(2, 5);
-    assert(subtract_ranges(a, a, out) == 0);
+        SharedNode right = nullptr;
+        if (at < len) {
+            right =
+                std::make_shared<Node>(Node(self->leaf_data.split_right(at)));
+        }
 
-    assert(subtract_ranges(a, empty3, out) == 1);
-    assert(out[0] == a);
+        return concat3(left, what, right);
+    }
 
-    Range b(5, 6);
-    assert(subtract_ranges(a, b, out) == 1);
-    assert(out[0] == a);
+    if (at < len) {
+        SharedNode child = insert_node(self->left, at, what);
+        return concat2(child, self->right);
+    } else {
+        SharedNode child = insert_node(self->right, at - len, what);
+        return concat2(self->left, child);
+    }
+}
 
-    assert(subtract_ranges(b, a, out) == 1);
-    assert(out[0] == b);
+template<typename F>
+void visit_leafs(const SharedNode& self, F fun) {
+    if (!self) {
+        return;
+    }
+    if (!self->left && !self->right) {
+        if (!self->leaf_data.empty()) {
+            fun(self);
+        }
+    } else {
+        visit_leafs<F>(self->left, fun);
+        visit_leafs<F>(self->right, fun);
+    }
+}
 
-    Range c(4, 6);
-    assert(subtract_ranges(a, c, out) == 1);
-    assert(out[0] == Range(2, 4));
+void indent(int n) {
+    for (int i = 0; i < n; i++) {
+        printf(" ");
+    }
+}
 
-    assert(subtract_ranges(c, a, out) == 1);
-    assert(out[0] == Range(5, 6));
+void debug_node(const SharedNode& self, int level) {
+    indent(level);
+    if (!self) {
+        printf("null\n");
+    } else if (!self->left && !self->right) {
+        printf("'%s'\n", self->leaf_data.str());
+    } else {
+        printf("left:\n");
+        debug_node(self->left, level + 2);
 
-    Range d(3, 4);
-    assert(subtract_ranges(a, d, out) == 2);
-    assert(out[0] == Range(2, 3));
-    assert(out[1] == Range(4, 5));
+        indent(level);
+        printf("right:\n");
+        debug_node(self->right, level + 2);
+    }
 }
 
 class CPatchStr {
-    Vector<Part> m_parts;
+    SharedNode root = nullptr;
 
   public:
     CPatchStr() {}
 
-    CPatchStr(const CPatchStr& copy) : m_parts(copy.m_parts) {}
+    CPatchStr(SharedNode node) : root(node) {}
 
-    CPatchStr(const char* str) : m_parts(Part(str)) {}
+    CPatchStr(const CPatchStr& copy) {
+        root = SharedNode(copy.root);
+    }
+
+    CPatchStr(const char* str) : root(std::make_shared<Node>(Node(str))) {}
 
     void operator=(const CPatchStr& other) {
-        this->m_parts = other.m_parts;
+        this->root = other.root;
     }
 
     void operator=(const char* str) {
-        m_parts.clear();
-        m_parts.push(Part(str));
+        *this = CPatchStr(str);
+    }
+
+    bool empty() const {
+        return !root;
+    }
+
+    unsigned size() const {
+        if (empty()) {
+            return 0;
+        }
+        return root->size();
     }
 
     CPatchStr subStr(size_t from, size_t len) const {
-        Range range {from, from + len};
-
-        CPatchStr substr {};
-
-        size_t offset = 0;
-
-        for (const Part& part : m_parts) {
-            Range part_range {offset, offset + part.len()};
-
-            Range out = intersect_ranges(part_range, range);
-
-            if (!out.empty()) {
-                Part copy {part};
-                copy.shrink_to(out.subtract_base(offset));
-                substr.m_parts.push(copy);
-            }
-
-            offset = part_range.end;
+        unsigned total_size = size();
+        if (from + len > total_size) {
+            throw std::out_of_range("bungus");
         }
 
-        if (range.start > offset || range.end > offset) {
-            throw std::out_of_range("Out of range");
+        if (len == 0) {
+            return CPatchStr();
         }
 
-        return substr;
+        SharedNode copy;
+        copy = split(root, from, false);
+        copy = split(copy, len, true);
+
+        return copy;
     }
-
-    // CPatchStr& append(const char* src) {
-    //     Part tmp(src);
-    //     m_parts.append(tmp);
-    //     return *this;
-    // }
 
     CPatchStr& append(const CPatchStr& src) {
-        m_parts.append(src.m_parts);
-        return *this;
-    }
-
-    CPatchStr& _insert_internal(size_t pos, const CPatchStr& src) {
-        size_t offset = 0;
-
-        size_t i = 0;
-        for (; i < m_parts.size(); i++) {
-            Part& part = m_parts[i];
-            size_t part_start = offset;
-            size_t part_end = part_start + part.len();
-
-            if (part_start == pos) {
-                break;
-            }
-
-            // pos is in the middle of a part, need to split it
-            if (pos < part_end) {
-                Part right = part.split(pos - part_start);
-
-                offset += part.len();
-                i++;
-
-                m_parts.insert(i, right);
-                break;
-            }
-
-            offset = part_end;
+        if (src.empty()) {
+            return *this;
         }
 
-        if (pos > offset) {
-            throw std::out_of_range("Out of range");
+        if (empty()) {
+            *this = src;
+        } else {
+            Node new_root(std::move(root), src.root);
+            root = std::make_shared<Node>(new_root);
         }
-
-        m_parts.insert(i, 0, src.m_parts);
 
         return *this;
     }
 
     CPatchStr& insert(size_t pos, const CPatchStr& src) {
-        if (this == &src) {
-            CPatchStr copy(src);
-            return _insert_internal(pos, copy);
-        } else {
-            return _insert_internal(pos, src);
+        unsigned total_size = size();
+        if (pos > total_size) {
+            throw std::out_of_range("bungus");
         }
+
+        *this = insert_node(root, pos, src.root);
+
+        return *this;
     }
 
     CPatchStr& remove(size_t from, size_t len) {
-        Range range {from, from + len};
-
-        size_t offset = 0;
-
-        for (size_t i = 0; i < m_parts.size() && offset < range.end;) {
-            Part* part = &m_parts[i];
-            Range part_range {offset, offset + part->len()};
-
-            Range out[2];
-            size_t count = subtract_ranges(part_range, range, out);
-
-            if (count == 0) {
-                m_parts.remove(i);
-            } else {
-                if (count == 2) {
-                    Part right {*part};
-                    right.shrink_to(out[1].subtract_base(offset));
-                    m_parts.insert(i + 1, right);
-                    part = &m_parts[i];
-                    i++;
-                }
-                part->shrink_to(out[0].subtract_base(offset));
-                i++;
-            }
-
-            offset = part_range.end;
+        unsigned total_size = size();
+        if (from + len > total_size) {
+            throw std::out_of_range("bungus");
         }
 
-        if (range.end > offset) {
-            throw std::out_of_range("Out of range");
+        if (len == 0) {
+            return *this;
         }
+
+        SharedNode left = split(root, from, true);
+        SharedNode right = split(root, from + len, false);
+        *this = concat2(left, right);
 
         return *this;
     }
 
     char* toStr() const {
         size_t size = 0;
-        for (const Part& part : m_parts) {
-            size += part.len();
-        }
+        visit_leafs(root, [&size](const SharedNode& leaf) {
+            const Part& data = leaf->leaf_data;
+            size += data.len();
+        });
 
         char* str = new char[size + 1];
 
         size_t offset = 0;
-        for (const Part& part : m_parts) {
-            memcpy(str + offset, part.str(), part.len());
-            offset += part.len();
-        }
+        visit_leafs(root, [&offset, &str](const SharedNode& leaf) {
+            const Part& data = leaf->leaf_data;
+            memcpy(str + offset, data.str(), data.len());
+            offset += data.len();
+        });
         str[offset] = 0;
 
         return str;
+    }
+
+    void debug() {
+        debug_node(root, 0);
     }
 };
 
@@ -555,8 +376,6 @@ bool stringMatch(const CPatchStr& pstr, const char* expected) {
     #endif
 
 int main() {
-    test_subtract_ranges();
-
     #ifdef FUZZ
     fuzz();
     // return 0;
@@ -589,6 +408,7 @@ int main() {
     assert(stringMatch(c, "test data"));
 
     assert(stringMatch(a, "test data"));
+
     CPatchStr d(a.subStr(3, 5));
     assert(stringMatch(d, "t dat"));
     d.append(b);

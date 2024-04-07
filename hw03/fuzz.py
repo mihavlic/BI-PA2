@@ -1,7 +1,6 @@
 import sys
 import random
 import string
-from typing import Dict
 
 VARS = 64
 LINES = 256
