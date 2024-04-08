@@ -83,9 +83,6 @@ struct Node {
         left_size(left->size()),
         right_size(right->size()) {}
 
-    Node(SharedNode left_, SharedNode middle, SharedNode right_) :
-        Node(left_, std::make_shared<Node>(Node(middle, right_))) {}
-
     unsigned size() const {
         return left_size + right_size;
     }
@@ -102,16 +99,7 @@ SharedNode concat2(SharedNode left, SharedNode right) {
 }
 
 SharedNode concat3(SharedNode left, SharedNode middle, SharedNode right) {
-    if (!left) {
-        return concat2(middle, right);
-    }
-    if (!middle) {
-        return concat2(left, right);
-    }
-    if (!right) {
-        return concat2(left, middle);
-    }
-    return std::make_shared<Node>(left, middle, right);
+    return concat2(concat2(left, middle), right);
 }
 
 // find the node that covers the entire range
