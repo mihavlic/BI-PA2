@@ -9,7 +9,7 @@
 				"build",
 				"${relativeFile}",
 				"--options",
-				" -Wuninitialized -Wmaybe-uninitialized -Wextra -g -ftrapv -fsanitize=address"
+				"  -pedantic -Wall -g -fsanitize=address -std=c++20"
 			],
 			"group": {
 				"kind": "build",
