@@ -197,11 +197,8 @@ class CFilter {
     std::vector<NameWords> names;
     CDate born_start {0, 0, 0};
     CDate born_end {0, 0, 0};
-    int enrolled_start;
-    int enrolled_end;
-
-    bool filter_born = false;
-    bool filter_enrolled = false;
+    int enrolled_start = 0;
+    int enrolled_end = 0;
 
   public:
     CFilter() {}
@@ -212,25 +209,21 @@ class CFilter {
     }
 
     CFilter& bornBefore(const CDate& date) {
-        filter_born = true;
         born_end = date;
         return *this;
     }
 
     CFilter& bornAfter(const CDate& date) {
-        filter_born = true;
         born_start = date;
         return *this;
     }
 
     CFilter& enrolledBefore(int year) {
-        filter_enrolled = true;
         enrolled_end = year;
         return *this;
     }
 
     CFilter& enrolledAfter(int year) {
-        filter_enrolled = true;
         enrolled_start = year;
         return *this;
     }
@@ -373,7 +366,7 @@ class CStudyDept {
 
         bool first = true;
 
-        if (flt.filter_born && flt.born_start < flt.born_end) {
+        if (flt.born_start < flt.born_end) {
             if (first) {
                 first = false;
 
@@ -389,7 +382,7 @@ class CStudyDept {
             }
         }
 
-        if (flt.filter_enrolled && flt.enrolled_start < flt.enrolled_end) {
+        if (flt.enrolled_start < flt.enrolled_end) {
             if (first) {
                 first = false;
 
