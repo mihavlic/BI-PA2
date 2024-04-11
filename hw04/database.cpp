@@ -1,3 +1,4 @@
+#include <cstdint>
 #ifndef __PROGTEST__
     #include <algorithm>
     #include <array>
@@ -184,6 +185,10 @@ class CFilter {
     CDate born_end {0, 0, 0};
     int enrolled_start = 0;
     int enrolled_end = 0;
+    bool born_start_present = false;
+    bool born_end_present = false;
+    bool enrolled_start_present = false;
+    bool enrolled_end_present = false;
 
   public:
     CFilter() {}
@@ -195,21 +200,25 @@ class CFilter {
 
     CFilter& bornBefore(const CDate& date) {
         born_end = date;
+        born_end_present = true;
         return *this;
     }
 
     CFilter& bornAfter(const CDate& date) {
         born_start = date;
+        born_start_present = true;
         return *this;
     }
 
     CFilter& enrolledBefore(int year) {
         enrolled_end = year;
+        enrolled_end_present = true;
         return *this;
     }
 
     CFilter& enrolledAfter(int year) {
         enrolled_start = year;
+        enrolled_start_present = true;
         return *this;
     }
 
@@ -333,19 +342,6 @@ class CStudyDept {
         return true;
     }
 
-    static void
-    retain_union(std::vector<CStudent*>& vec, std::set<CStudent*>& set) {
-        (void)std::remove_if(
-            vec.begin(),
-            vec.end(),
-            [set](CStudent* student) -> bool { return !set.contains(student); }
-        );
-
-        set.clear();
-        std::copy(vec.begin(), vec.end(), std::inserter(set, set.end()));
-        vec.clear();
-    }
-
     std::list<CStudent> search(const CFilter& flt, const CSort& sortOpt) const {
         std::vector<CStudent*> vec;
 
@@ -353,15 +349,21 @@ class CStudyDept {
 
         bool first = true;
 
-        if (flt.born_start < flt.born_end) {
+        if (flt.born_start_present || flt.born_end_present) {
             if (first) {
                 first = false;
 
-                dummy.born = flt.born_start;
-                auto start = by_born.upper_bound(&dummy);
+                auto start = by_born.begin();
+                if (flt.born_start_present) {
+                    dummy.born = flt.born_start;
+                    by_born.upper_bound(&dummy);
+                }
 
-                dummy.born = flt.born_end;
-                auto end = by_born.lower_bound(&dummy);
+                auto end = by_born.end();
+                if (flt.born_end_present) {
+                    dummy.born = flt.born_end;
+                    end = by_born.lower_bound(&dummy);
+                }
 
                 std::copy(start, end, std::back_inserter(vec));
             } else {
@@ -369,26 +371,42 @@ class CStudyDept {
             }
         }
 
-        if (flt.enrolled_start < flt.enrolled_end) {
+        if (flt.enrolled_start_present || flt.enrolled_end_present) {
             if (first) {
                 first = false;
 
-                dummy.enrolled = flt.enrolled_start;
-                auto start = by_enrolled.upper_bound(&dummy);
+                auto start = by_enrolled.begin();
+                if (flt.enrolled_start_present) {
+                    dummy.enrolled = flt.enrolled_start;
+                    by_enrolled.upper_bound(&dummy);
+                }
 
-                dummy.enrolled = flt.enrolled_end;
-                auto end = by_enrolled.lower_bound(&dummy);
+                auto end = by_enrolled.end();
+                if (flt.enrolled_end_present) {
+                    dummy.enrolled = flt.enrolled_end;
+                    end = by_enrolled.lower_bound(&dummy);
+                }
 
                 std::copy(start, end, std::back_inserter(vec));
             } else {
+                int64_t start = INT64_MIN;
+                int64_t end = INT64_MAX;
+
+                if (flt.enrolled_start_present) {
+                    start = flt.enrolled_start;
+                }
+                if (flt.enrolled_end_present) {
+                    end = flt.enrolled_end;
+                }
+
                 vec.erase(
                     std::remove_if(
                         vec.begin(),
                         vec.end(),
-                        [&flt](CStudent* student) -> bool {
+                        [start, end](CStudent* student) -> bool {
                             return !(
-                                flt.enrolled_start < student->enrolled
-                                && student->enrolled < flt.enrolled_end
+                                start < (int64_t)student->enrolled
+                                && (int64_t)student->enrolled < end
                             );
                         }
                     ),
