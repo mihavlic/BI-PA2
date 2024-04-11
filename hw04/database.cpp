@@ -81,28 +81,13 @@ struct NameWords {
         }
     }
 
-    bool contains(const NameWords& other, bool exact_match) const {
-        if (exact_match) {
-            if (words.size() != other.words.size()) {
-                return false;
-            }
-        } else {
-            if (words.size() < other.words.size()) {
-                return false;
-            }
-        }
+    bool matches(const NameWords& other) const {
+        // both words are small case and sorted, we can just compare
+        return words == other.words;
+    }
 
+    bool contains(const NameWords& other) const {
         for (const auto& word : other.words) {
-            // bool found = false;
-            // for (const auto& word2 : words) {
-            //     if (word == word2) {
-            //         found = true;
-            //         break;
-            //     }
-            // }
-            // if (!found) {
-            //     return false;
-            // }
             if (!std::binary_search(words.begin(), words.end(), word)) {
                 return false;
             }
@@ -413,9 +398,9 @@ class CStudyDept {
         }
 
         if (flt.names.size() > 0) {
-            auto validation_lambda = [&flt](const CStudent* student) -> bool {
+            auto names_match = [&flt](const CStudent* student) -> bool {
                 for (const NameWords& words : flt.names) {
-                    if (student->words.contains(words, true)) {
+                    if (student->words.matches(words)) {
                         return true;
                     }
                 }
@@ -429,15 +414,15 @@ class CStudyDept {
                     by_all.begin(),
                     by_all.end(),
                     std::back_inserter(vec),
-                    validation_lambda
+                    names_match
                 );
             } else {
                 vec.erase(
                     std::remove_if(
                         vec.begin(),
                         vec.end(),
-                        [&validation_lambda](const CStudent* student) -> bool {
-                            return !validation_lambda(student);
+                        [&names_match](const CStudent* student) -> bool {
+                            return !names_match(student);
                         }
                     ),
                     vec.end()
@@ -465,7 +450,7 @@ class CStudyDept {
         std::set<std::string> out;
 
         for (const CStudent* student : by_name) {
-            if (student->words.contains(search, false)) {
+            if (student->words.contains(search)) {
                 out.insert(student->name);
             }
         }
