@@ -147,7 +147,7 @@ class CStudent {
         insert_order = insert_order_;
     }
 
-    static bool cmp(const CStudent* a, const CStudent* b) {
+    static bool lt_by_all(const CStudent* a, const CStudent* b) {
         if (a->name < b->name) {
             return true;
         }
@@ -168,21 +168,21 @@ class CStudent {
         return false;
     }
 
-    static bool cmp_by_name(const CStudent* a, const CStudent* b) {
+    static bool lt_by_name(const CStudent* a, const CStudent* b) {
         if (a->name == b->name) {
             return a->insert_order < b->insert_order;
         }
         return (a->name < b->name);
     }
 
-    static bool cmp_by_born(const CStudent* a, const CStudent* b) {
+    static bool lt_by_born(const CStudent* a, const CStudent* b) {
         if (a->born == b->born) {
             return a->insert_order < b->insert_order;
         }
         return (a->born < b->born);
     }
 
-    static bool cmp_by_enrolled(const CStudent* a, const CStudent* b) {
+    static bool lt_by_enrolled(const CStudent* a, const CStudent* b) {
         if (a->enrolled == b->enrolled) {
             return a->insert_order < b->insert_order;
         }
@@ -289,15 +289,17 @@ class CSort {
 };
 
 class CStudyDept {
-    std::set<CStudent*, decltype(CStudent::cmp)*> by_all {CStudent::cmp};
-    std::set<CStudent*, decltype(CStudent::cmp_by_name)*> by_name {
-        CStudent::cmp_by_name
+    std::set<CStudent*, decltype(CStudent::lt_by_all)*> by_all {
+        CStudent::lt_by_all
     };
-    std::set<CStudent*, decltype(CStudent::cmp_by_born)*> by_born {
-        CStudent::cmp_by_born
+    std::set<CStudent*, decltype(CStudent::lt_by_name)*> by_name {
+        CStudent::lt_by_name
     };
-    std::set<CStudent*, decltype(CStudent::cmp_by_enrolled)*> by_enrolled {
-        CStudent::cmp_by_enrolled
+    std::set<CStudent*, decltype(CStudent::lt_by_born)*> by_born {
+        CStudent::lt_by_born
+    };
+    std::set<CStudent*, decltype(CStudent::lt_by_enrolled)*> by_enrolled {
+        CStudent::lt_by_enrolled
     };
     unsigned counter;
 
