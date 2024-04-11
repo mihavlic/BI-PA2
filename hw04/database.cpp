@@ -76,7 +76,7 @@ struct NameWords {
             size_t end = i;
 
             if (start < end) {
-                words.push_back(std::string(str + start, end - start));
+                words.emplace_back(std::string(str + start, end - start));
             }
         }
     }
@@ -204,7 +204,7 @@ class CFilter {
     CFilter() {}
 
     CFilter& name(const std::string& name) {
-        names.push_back(NameWords(name));
+        names.emplace_back(NameWords(name));
         return *this;
     }
 
@@ -452,7 +452,7 @@ class CStudyDept {
 
         std::list<CStudent> out;
         for (CStudent* student : vec) {
-            out.push_back(*student);
+            out.emplace_back(*student);
         }
 
         return out;
