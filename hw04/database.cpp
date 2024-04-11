@@ -82,10 +82,7 @@ struct NameWords {
         }
     }
 
-    bool matches(const NameWords& other) const {
-        // both words are small case and sorted, we can just compare
-        return words == other.words;
-    }
+    bool operator==(const NameWords& other) const = default;
 
     bool contains(const NameWords& other) const {
         for (const auto& word : other.words) {
@@ -232,11 +229,6 @@ class CSort {
     CSort() {}
 
     CSort& addKey(ESortKey key, bool ascending) {
-        for (auto& el : keys) {
-            if (el.first == key) {
-                return *this;
-            }
-        }
         keys.push_back(std::make_pair(key, ascending));
 
         return *this;
@@ -367,7 +359,28 @@ class CStudyDept {
 
                 std::copy(start, end, std::back_inserter(vec));
             } else {
-                //
+                vec.erase(
+                    std::remove_if(
+                        vec.begin(),
+                        vec.end(),
+                        [flt](CStudent* student) -> bool {
+                            if (flt.born_start_present) {
+                                if (student->born <= flt.born_start) {
+                                    return true;
+                                }
+                            }
+
+                            if (flt.born_end_present) {
+                                if (student->born >= flt.born_end) {
+                                    return true;
+                                }
+                            }
+
+                            return false;
+                        }
+                    ),
+                    vec.end()
+                );
             }
         }
 
@@ -417,14 +430,15 @@ class CStudyDept {
 
         if (flt.names.size() > 0) {
             auto names_match = [&flt](const CStudent* student) -> bool {
-                for (const NameWords& words : flt.names) {
-                    if (student->words.matches(words)) {
-                        return true;
-                    }
-                }
-                return false;
+                auto found = std::find(
+                    flt.names.begin(),
+                    flt.names.end(),
+                    student->words
+                );
+                return found != flt.names.end();
             };
 
+            first = false;
             if (first) {
                 first = false;
 
@@ -439,7 +453,7 @@ class CStudyDept {
                     std::remove_if(
                         vec.begin(),
                         vec.end(),
-                        [&names_match](const CStudent* student) -> bool {
+                        [names_match](const CStudent* student) -> bool {
                             return !names_match(student);
                         }
                     ),
