@@ -178,10 +178,10 @@ class CStudent {
 
 class CFilter {
     std::vector<NameWords> names;
-    CDate born_start {0, 0, 0};
-    CDate born_end {0, 0, 0};
-    int enrolled_start = 0;
-    int enrolled_end = 0;
+    CDate born_start {INT_MIN, INT_MIN, INT_MIN};
+    CDate born_end {INT_MAX, INT_MAX, INT_MAX};
+    int enrolled_start = INT_MIN;
+    int enrolled_end = INT_MAX;
     bool born_start_present = false;
     bool born_end_present = false;
     bool enrolled_start_present = false;
@@ -196,25 +196,25 @@ class CFilter {
     }
 
     CFilter& bornBefore(const CDate& date) {
-        born_end = date;
+        born_end = std::min(born_end, date);
         born_end_present = true;
         return *this;
     }
 
     CFilter& bornAfter(const CDate& date) {
-        born_start = date;
+        born_start = std::max(born_start, date);
         born_start_present = true;
         return *this;
     }
 
     CFilter& enrolledBefore(int year) {
-        enrolled_end = year;
+        enrolled_end = std::min(enrolled_end, year);
         enrolled_end_present = true;
         return *this;
     }
 
     CFilter& enrolledAfter(int year) {
-        enrolled_start = year;
+        enrolled_start = std::max(enrolled_start, year);
         enrolled_start_present = true;
         return *this;
     }
@@ -336,7 +336,6 @@ class CStudyDept {
 
     std::list<CStudent> search(const CFilter& flt, const CSort& sortOpt) const {
         std::vector<CStudent*> vec;
-
         CStudent dummy {};
 
         bool first = true;
@@ -438,7 +437,6 @@ class CStudyDept {
                 return found != flt.names.end();
             };
 
-            first = false;
             if (first) {
                 first = false;
 
