@@ -95,81 +95,76 @@ struct NameWords {
     }
 };
 
+template<typename T>
+struct ExtraComparable {
+    signed char extra = 0;
+    T value;
+
+    ExtraComparable(T value_) : value(value_) {}
+
+    std::strong_ordering operator<=>(const ExtraComparable<T>& other
+    ) const = default;
+
+    friend std::ostream&
+    operator<<(std::ostream& os, const ExtraComparable<T>& t) {
+        return os << t.value;
+    }
+};
+
 class CStudent {
-    std::string name;
-    CDate born;
-    int enrolled;
-    unsigned insert_order;
-    NameWords words;
+    ExtraComparable<std::string> name {{}};
+    ExtraComparable<CDate> born {{0, 0, 0}};
+    ExtraComparable<int> enrolled {0};
+
+    unsigned insert_order {0};
+    NameWords words {};
 
   public:
-    CStudent() : born(0, 0, 0) {}
+    CStudent() {}
 
     CStudent(const std::string& name_, const CDate& born_, int enrolled_) :
-        name(name_),
-        born(born_),
+        name({name_}),
+        born({born_}),
         enrolled(enrolled_),
         insert_order(0),
-        words(name) {}
-
-    bool operator==(const CStudent& other) const {
-        return name == other.name && born == other.born
-            && enrolled == other.enrolled;
-    }
-
-    bool operator!=(const CStudent& other) const {
-        return !(*this == other);
-    }
+        words(name_) {}
 
     friend std::ostream& operator<<(std::ostream& os, const CStudent& t) {
         return os << '(' << t.name << " " << t.born << " " << t.enrolled << " "
                   << t.insert_order << ')';
     }
 
-    void set_insert_order(unsigned insert_order_) {
-        insert_order = insert_order_;
+    std::strong_ordering operator<=>(const CStudent& b) const {
+        if (born < b.born) {
+            return std::strong_ordering::less;
+        }
+        if (born > b.born) {
+            return std::strong_ordering::greater;
+        }
+
+        if (enrolled < b.enrolled) {
+            return std::strong_ordering::less;
+        }
+        if (enrolled > b.enrolled) {
+            return std::strong_ordering::greater;
+        }
+
+        if (name < b.name) {
+            return std::strong_ordering::less;
+        }
+        if (name > b.name) {
+            return std::strong_ordering::greater;
+        }
+
+        return std::strong_ordering::equal;
     }
 
-    static bool lt_by_all(const CStudent* a, const CStudent* b) {
-        if (a->name < b->name) {
-            return true;
-        }
-        if (a->name > b->name) {
-            return false;
-        }
-
-        if (a->born < b->born) {
-            return true;
-        }
-        if (a->born > b->born) {
-            return false;
-        }
-
-        if (a->enrolled < b->enrolled) {
-            return true;
-        }
-        return false;
+    bool operator==(const CStudent& b) const {
+        return (*this <=> b) == std::strong_ordering::equal;
     }
 
-    static bool lt_by_name(const CStudent* a, const CStudent* b) {
-        if (a->name == b->name) {
-            return a->insert_order < b->insert_order;
-        }
-        return (a->name < b->name);
-    }
-
-    static bool lt_by_born(const CStudent* a, const CStudent* b) {
-        if (a->born == b->born) {
-            return a->insert_order < b->insert_order;
-        }
-        return (a->born < b->born);
-    }
-
-    static bool lt_by_enrolled(const CStudent* a, const CStudent* b) {
-        if (a->enrolled == b->enrolled) {
-            return a->insert_order < b->insert_order;
-        }
-        return (a->enrolled < b->enrolled);
+    bool operator!=(const CStudent& b) const {
+        return (*this <=> b) != std::strong_ordering::equal;
     }
 
     friend class CSort;
@@ -234,14 +229,14 @@ class CSort {
         return *this;
     }
 
-    void sort(std::vector<CStudent*>& vec) const {
+    void sort(std::vector<CStudent>& vec) const {
         std::sort(
             vec.begin(),
             vec.end(),
-            [this](CStudent* const& a, CStudent* const& b) -> bool {
+            [this](const CStudent& a, const CStudent& b) -> bool {
                 for (auto& key : this->keys) {
-                    const CStudent* a_ = a;
-                    const CStudent* b_ = b;
+                    const CStudent* a_ = &a;
+                    const CStudent* b_ = &b;
 
                     if (!key.second) {
                         std::swap(a_, b_);
@@ -249,239 +244,123 @@ class CSort {
 
                     switch (key.first) {
                         case ESortKey::NAME:
-                            if (a_->name == b_->name) {
+                            if (a_->name.value == b_->name.value) {
                                 break;
                             }
-                            return a_->name < b_->name;
+                            return a_->name.value < b_->name.value;
                         case ESortKey::BIRTH_DATE:
-                            if (a_->born == b_->born) {
+                            if (a_->born.value == b_->born.value) {
                                 break;
                             }
-                            return a_->born < b_->born;
+                            return a_->born.value < b_->born.value;
                         case ESortKey::ENROLL_YEAR:
-                            if (a_->enrolled == b_->enrolled) {
+                            if (a_->enrolled.value == b_->enrolled.value) {
                                 break;
                             }
-                            return a_->enrolled < b_->enrolled;
+                            return a_->enrolled.value < b_->enrolled.value;
                         default:
                             break;
                     }
                 }
 
-                return a->insert_order < b->insert_order;
+                return a.insert_order < b.insert_order;
             }
         );
     }
 };
 
 class CStudyDept {
-    std::set<CStudent*, decltype(CStudent::lt_by_all)*> by_all {
-        CStudent::lt_by_all
-    };
-    std::set<CStudent*, decltype(CStudent::lt_by_name)*> by_name {
-        CStudent::lt_by_name
-    };
-    std::set<CStudent*, decltype(CStudent::lt_by_born)*> by_born {
-        CStudent::lt_by_born
-    };
-    std::set<CStudent*, decltype(CStudent::lt_by_enrolled)*> by_enrolled {
-        CStudent::lt_by_enrolled
-    };
+    std::set<CStudent> set;
     unsigned counter;
 
   public:
     CStudyDept() {}
 
-    ~CStudyDept() {
-        for (CStudent* student : by_all) {
-            delete student;
-        }
-    }
-
     bool addStudent(const CStudent& x) {
-        CStudent* a = new CStudent(x);
-        auto ret = by_all.insert(a);
+        auto pair = set.insert(x);
 
-        if (!ret.second) {
-            delete a;
+        if (!pair.second) {
             return false;
         }
 
-        a->set_insert_order(counter++);
-
-        by_name.insert(a);
-        by_born.insert(a);
-        by_enrolled.insert(a);
+        // yeees
+        const_cast<CStudent*>(&*pair.first)->insert_order = counter++;
 
         return true;
     }
 
     bool delStudent(const CStudent& x) {
-        CStudent* yes = const_cast<CStudent*>(&x);
-
-        auto it = by_all.find(yes);
-        if (it == by_all.end()) {
-            return false;
-        }
-
-        by_name.erase(*it);
-        by_born.erase(*it);
-        by_enrolled.erase(*it);
-
-        delete *it;
-        by_all.erase(it);
-
-        return true;
+        auto erased_count = set.erase(x);
+        return erased_count > 0;
     }
 
     std::list<CStudent> search(const CFilter& flt, const CSort& sortOpt) const {
-        std::vector<CStudent*> vec;
-        CStudent dummy {};
+        CStudent start_dummy {};
+        CStudent end_dummy {};
 
-        bool first = true;
-
-        if (flt.born_start_present || flt.born_end_present) {
-            if (first) {
-                first = false;
-
-                auto start = by_born.begin();
-                if (flt.born_start_present) {
-                    dummy.born = flt.born_start;
-                    by_born.upper_bound(&dummy);
-                }
-
-                auto end = by_born.end();
-                if (flt.born_end_present) {
-                    dummy.born = flt.born_end;
-                    end = by_born.lower_bound(&dummy);
-                }
-
-                std::copy(start, end, std::back_inserter(vec));
-            } else {
-                vec.erase(
-                    std::remove_if(
-                        vec.begin(),
-                        vec.end(),
-                        [flt](CStudent* student) -> bool {
-                            if (flt.born_start_present) {
-                                if (student->born <= flt.born_start) {
-                                    return true;
-                                }
-                            }
-
-                            if (flt.born_end_present) {
-                                if (student->born >= flt.born_end) {
-                                    return true;
-                                }
-                            }
-
-                            return false;
-                        }
-                    ),
-                    vec.end()
-                );
-            }
+        if (flt.born_start_present) {
+            start_dummy.born = flt.born_start;
+        } else {
+            start_dummy.born.extra = -1;
+        }
+        if (flt.born_end_present) {
+            end_dummy.born = flt.born_end;
+        } else {
+            end_dummy.born.extra = 1;
         }
 
-        if (flt.enrolled_start_present || flt.enrolled_end_present) {
-            if (first) {
-                first = false;
-
-                auto start = by_enrolled.begin();
-                if (flt.enrolled_start_present) {
-                    dummy.enrolled = flt.enrolled_start;
-                    by_enrolled.upper_bound(&dummy);
-                }
-
-                auto end = by_enrolled.end();
-                if (flt.enrolled_end_present) {
-                    dummy.enrolled = flt.enrolled_end;
-                    end = by_enrolled.lower_bound(&dummy);
-                }
-
-                std::copy(start, end, std::back_inserter(vec));
-            } else {
-                int64_t start = INT64_MIN;
-                int64_t end = INT64_MAX;
-
-                if (flt.enrolled_start_present) {
-                    start = flt.enrolled_start;
-                }
-                if (flt.enrolled_end_present) {
-                    end = flt.enrolled_end;
-                }
-
-                vec.erase(
-                    std::remove_if(
-                        vec.begin(),
-                        vec.end(),
-                        [start, end](CStudent* student) -> bool {
-                            return !(
-                                start < (int64_t)student->enrolled
-                                && (int64_t)student->enrolled < end
-                            );
-                        }
-                    ),
-                    vec.end()
-                );
-            }
+        if (flt.enrolled_start_present) {
+            start_dummy.enrolled = flt.enrolled_start;
+        } else {
+            start_dummy.enrolled.extra = -1;
         }
+        if (flt.enrolled_end_present) {
+            end_dummy.enrolled = flt.enrolled_end;
+        } else {
+            end_dummy.enrolled.extra = 1;
+        }
+
+        start_dummy.name.extra = -1;
+        end_dummy.name.extra = 1;
+
+        if (start_dummy >= end_dummy) {
+            return {};
+        }
+
+        auto start = set.upper_bound(start_dummy);
+        auto end = set.lower_bound(end_dummy);
+
+        std::vector<CStudent> vec {start, end};
 
         if (flt.names.size() > 0) {
-            auto names_match = [&flt](const CStudent* student) -> bool {
+            auto names_no_match = [&flt](const CStudent& student) -> bool {
                 auto found = std::find(
                     flt.names.begin(),
                     flt.names.end(),
-                    student->words
+                    student.words
                 );
-                return found != flt.names.end();
+                bool b = found == flt.names.end();
+                return b;
             };
 
-            if (first) {
-                first = false;
-
-                std::copy_if(
-                    by_all.begin(),
-                    by_all.end(),
-                    std::back_inserter(vec),
-                    names_match
-                );
-            } else {
-                vec.erase(
-                    std::remove_if(
-                        vec.begin(),
-                        vec.end(),
-                        [names_match](const CStudent* student) -> bool {
-                            return !names_match(student);
-                        }
-                    ),
-                    vec.end()
-                );
-            }
-        }
-
-        if (first) {
-            first = false;
-            std::copy(by_all.begin(), by_all.end(), std::back_inserter(vec));
+            vec.erase(
+                std::remove_if(vec.begin(), vec.end(), names_no_match),
+                vec.end()
+            );
         }
 
         sortOpt.sort(vec);
 
-        std::list<CStudent> out;
-        for (CStudent* student : vec) {
-            out.emplace_back(*student);
-        }
-
-        return out;
+        return std::list<CStudent>(vec.begin(), vec.end());
     }
 
     std::set<std::string> suggest(const std::string& name) const {
         NameWords search(name);
         std::set<std::string> out;
 
-        for (const CStudent* student : by_name) {
-            if (student->words.contains(search)) {
-                out.insert(student->name);
+        for (const CStudent& student : set) {
+            if (student.words.contains(search)) {
+                out.insert(student.name.value);
             }
         }
 
