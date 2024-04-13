@@ -48,15 +48,12 @@ struct NameWords {
 
     explicit NameWords(const std::string& str) {
         extract_words(str.data(), str.size(), words);
-        std::sort(words.begin(), words.end());
         for (auto& word : words) {
-            std::transform(
-                word.begin(),
-                word.end(),
-                word.begin(),
-                [](unsigned char c) { return std::tolower(c); }
-            );
+            std::transform(word.begin(), word.end(), word.begin(), [](char c) {
+                return std::tolower(c);
+            });
         }
+        std::sort(words.begin(), words.end());
     }
 
     static void extract_words(
@@ -82,7 +79,7 @@ struct NameWords {
         }
     }
 
-    bool operator==(const NameWords& other) const = default;
+    std::strong_ordering operator<=>(const NameWords& other) const = default;
 
     bool contains(const NameWords& other) const {
         for (const auto& word : other.words) {
@@ -135,28 +132,17 @@ class CStudent {
     }
 
     std::strong_ordering operator<=>(const CStudent& b) const {
-        if (born < b.born) {
-            return std::strong_ordering::less;
-        }
-        if (born > b.born) {
-            return std::strong_ordering::greater;
+        std::strong_ordering order = born <=> b.born;
+        if (order != std::strong_ordering::equal) {
+            return order;
         }
 
-        if (enrolled < b.enrolled) {
-            return std::strong_ordering::less;
-        }
-        if (enrolled > b.enrolled) {
-            return std::strong_ordering::greater;
+        order = enrolled <=> b.enrolled;
+        if (order != std::strong_ordering::equal) {
+            return order;
         }
 
-        if (name < b.name) {
-            return std::strong_ordering::less;
-        }
-        if (name > b.name) {
-            return std::strong_ordering::greater;
-        }
-
-        return std::strong_ordering::equal;
+        return name <=> b.name;
     }
 
     bool operator==(const CStudent& b) const {
@@ -172,11 +158,11 @@ class CStudent {
 };
 
 class CFilter {
-    std::vector<NameWords> names;
-    CDate born_start {INT_MIN, INT_MIN, INT_MIN};
-    CDate born_end {INT_MAX, INT_MAX, INT_MAX};
-    int enrolled_start = INT_MIN;
-    int enrolled_end = INT_MAX;
+    std::set<NameWords> names;
+    CDate born_start {0, 0, 0};
+    CDate born_end {0, 0, 0};
+    int enrolled_start = 0;
+    int enrolled_end = 0;
     bool born_start_present = false;
     bool born_end_present = false;
     bool enrolled_start_present = false;
@@ -186,30 +172,30 @@ class CFilter {
     CFilter() {}
 
     CFilter& name(const std::string& name) {
-        names.emplace_back(NameWords(name));
+        names.insert(NameWords(name));
         return *this;
     }
 
     CFilter& bornBefore(const CDate& date) {
-        born_end = std::min(born_end, date);
+        born_end = date;
         born_end_present = true;
         return *this;
     }
 
     CFilter& bornAfter(const CDate& date) {
-        born_start = std::max(born_start, date);
+        born_start = date;
         born_start_present = true;
         return *this;
     }
 
     CFilter& enrolledBefore(int year) {
-        enrolled_end = std::min(enrolled_end, year);
+        enrolled_end = year;
         enrolled_end_present = true;
         return *this;
     }
 
     CFilter& enrolledAfter(int year) {
-        enrolled_start = std::max(enrolled_start, year);
+        enrolled_start = year;
         enrolled_start_present = true;
         return *this;
     }
@@ -225,7 +211,6 @@ class CSort {
 
     CSort& addKey(ESortKey key, bool ascending) {
         keys.push_back(std::make_pair(key, ascending));
-
         return *this;
     }
 
@@ -242,24 +227,22 @@ class CSort {
                         std::swap(a_, b_);
                     }
 
+                    std::strong_ordering order = std::strong_ordering::equal;
                     switch (key.first) {
                         case ESortKey::NAME:
-                            if (a_->name.value == b_->name.value) {
-                                break;
-                            }
-                            return a_->name.value < b_->name.value;
+                            order = a_->name.value <=> b_->name.value;
+                            break;
                         case ESortKey::BIRTH_DATE:
-                            if (a_->born.value == b_->born.value) {
-                                break;
-                            }
-                            return a_->born.value < b_->born.value;
+                            order = a_->born.value <=> b_->born.value;
+                            break;
                         case ESortKey::ENROLL_YEAR:
-                            if (a_->enrolled.value == b_->enrolled.value) {
-                                break;
-                            }
-                            return a_->enrolled.value < b_->enrolled.value;
+                            order = a_->enrolled.value <=> b_->enrolled.value;
+                            break;
                         default:
                             break;
+                    }
+                    if (order != std::strong_ordering::equal) {
+                        return order == std::strong_ordering::less;
                     }
                 }
 
@@ -330,28 +313,21 @@ class CStudyDept {
         auto start = set.upper_bound(start_dummy);
         auto end = set.lower_bound(end_dummy);
 
-        std::vector<CStudent> vec {start, end};
+        std::vector<CStudent> vec {};
 
         if (flt.names.size() > 0) {
-            auto names_no_match = [&flt](const CStudent& student) -> bool {
-                auto found = std::find(
-                    flt.names.begin(),
-                    flt.names.end(),
-                    student.words
-                );
-                bool b = found == flt.names.end();
-                return b;
+            auto names_match = [&flt](const CStudent& student) -> bool {
+                return flt.names.contains(student.words);
             };
 
-            vec.erase(
-                std::remove_if(vec.begin(), vec.end(), names_no_match),
-                vec.end()
-            );
+            std::copy_if(start, end, std::back_inserter(vec), names_match);
+        } else {
+            vec = std::vector<CStudent> {start, end};
         }
 
         sortOpt.sort(vec);
 
-        return std::list<CStudent>(vec.begin(), vec.end());
+        return std::list<CStudent> {vec.begin(), vec.end()};
     }
 
     std::set<std::string> suggest(const std::string& name) const {
