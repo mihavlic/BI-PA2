@@ -1,7 +1,6 @@
 #include <cassert>
 #include <cfloat>
 #include <sstream>
-#include <variant>
 
 #include "velka.cpp"
 

@@ -103,6 +103,8 @@ class CPos {
     int x = 0;
     int y = 0;
 
+    CPos() {}
+
     CPos(std::string_view str) {
         size_t i = 0;
         bool x_absolute = false;
@@ -541,14 +543,7 @@ class CSpreadsheet {
         cell_call_stack.erase(entry.first);
     }
 
-    bool setCell(CPos pos, std::string contents) {
-        Cell cell;
-        try {
-            cell = Cell(contents);
-        } catch (...) {
-            return false;
-        }
-
+    bool setCell_internal(CPos pos, Cell cell) {
         auto entry = cells.insert({pos, std::move(cell)});
         Cell& cell_entry = entry.first->second;
 
@@ -557,6 +552,8 @@ class CSpreadsheet {
                 this->remove_cell_dependency(c, pos);
             });
 
+            // only doing this if the first insert failed
+            // which should mean that the cell wasn't moved out of
             cell_entry = std::move(cell);
         }
 
@@ -568,6 +565,15 @@ class CSpreadsheet {
         assert(cell_call_stack.empty());
 
         return true;
+    }
+
+    bool setCell(CPos pos, std::string contents) {
+        try {
+            Cell cell(contents);
+            return setCell_internal(pos, cell);
+        } catch (...) {
+            return false;
+        }
     }
 
     Cell* get_cell(CPos pos) {
@@ -868,24 +874,54 @@ class CSpreadsheet {
             Cell copy = entry->second;
             auto offset = CPos::make_relative_offset(src, dst);
             // mark dirty if cell contained any relative cell references
-            copy.dirty = copy.apply_offset(offset);
-            cells.insert_or_assign(dst, std::move(copy));
+            if (copy.apply_offset(offset)) {
+                copy.dirty = true;
+            }
+
+            setCell_internal(dst, std::move(copy));
         }
     }
 
     void copyRect(CPos dst, CPos src, int w = 1, int h = 1) {
-        CellRange range {
-            src,
-            CPos {
-                src.x + w,
-                src.y + h,
-            }
-        };
+        assert(w >= 0);
+        assert(h >= 0);
+
+        if (src == dst || w == 0 || h == 0) {
+            return;
+        }
+
+        int x_start = src.x;
+        int x_end = src.x + w - 1;
+        int x_d = 1;
+
+        if (dst.x > src.x) {
+            std::swap(x_start, x_end);
+            x_d = -1;
+        }
+
+        int y_start = src.y;
+        int y_end = src.y + h - 1;
+        int y_d = 1;
+
+        if (dst.y > src.y) {
+            std::swap(y_start, y_end);
+            y_d = -1;
+        }
 
         auto offset = CPos::make_relative_offset(src, dst);
-        range.for_cells([&](CPos src_) {
+
+        for (int y = y_start;; y += y_d) {
+            for (int x = x_start;; x += x_d) {
+                CPos src_(x, y);
             CPos dst_ = src_ + offset;
             copyCell(src_, dst_);
-        });
+                if (x == x_end) {
+                    break;
+                }
+            }
+            if (y == y_end) {
+                break;
+            }
+        }
     }
 };
