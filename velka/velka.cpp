@@ -742,6 +742,16 @@ class CSpreadsheet {
                         );
                     }
                     case FunctionKind::ADD: {
+                        const Expression& a = fun.arguments[0];
+                        const Expression& b = fun.arguments[1];
+
+                        if (std::holds_alternative<std::string>(a)
+                            && std::holds_alternative<std::string>(b)) {
+                            const std::string& a_ = std::get<std::string>(a);
+                            const std::string& b_ = std::get<std::string>(b);
+                            return CValue(a_ + b_);
+                        }
+
                         return numeric_binary_operator(
                             fun,
                             [](double a, double b) { return a + b; }
