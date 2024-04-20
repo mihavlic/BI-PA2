@@ -383,6 +383,10 @@ class ExpressionBuilder: public CExprBuilder {
         push_function(FunctionKind::GE);
     }
 
+    void valUndefined() {
+        push(Expression());
+    }
+
     virtual void valNumber(double val) {
         push(Expression(val));
     }
@@ -395,8 +399,20 @@ class ExpressionBuilder: public CExprBuilder {
         push(CellReference(val));
     }
 
+    void rawValReference(CellReference val) {
+        push(val);
+    }
+
+    void rawValRange(CellRange val) {
+        push(val);
+    }
+
     virtual void valRange(std::string val) {
         push(CellRange(val));
+    }
+
+    void rawFuncCall(FunctionKind kind) {
+        push_function(kind);
     }
 
     virtual void funcCall(std::string fnName, int paramCount) {
@@ -422,12 +438,14 @@ class ExpressionBuilder: public CExprBuilder {
 };
 
 class Cell {
-    Expression expression;
-    CValue cached_value;
-    bool dirty;
+    Expression expression {};
+    CValue cached_value = UNDEFINED;
+    bool dirty = true;
 
   public:
     Cell() {}
+
+    Cell(Expression expr) : expression(expr) {}
 
     Cell(const std::string& str) {
         ExpressionBuilder builder {};
@@ -442,12 +460,12 @@ class Cell {
 
     template<typename F>
     static void visit_expression(Expression& expr, F fun) {
-        fun(expr);
         Cell::on_variant<Function>(expr, [fun](Function& function) {
             for (auto& arg : function) {
                 Cell::visit_expression(arg, fun);
             }
         });
+        fun(expr);
     }
 
     template<typename T, typename F>
@@ -491,6 +509,203 @@ class Cell {
     friend class CSpreadsheet;
 };
 
+class StreamWriter {
+    std::ostream& os;
+
+  public:
+    StreamWriter(std::ostream& os) : os(os) {}
+
+    void write_i8(int8_t value) {
+        os.write(reinterpret_cast<const char*>(&value), sizeof(int8_t));
+    }
+
+    void write_i32(int32_t value) {
+        os.write(reinterpret_cast<const char*>(&value), sizeof(int32_t));
+    }
+
+    void write_i64(int64_t value) {
+        os.write(reinterpret_cast<const char*>(&value), sizeof(int64_t));
+    }
+
+    void write_double(double value) {
+        os.write(reinterpret_cast<const char*>(&value), sizeof(double));
+    }
+
+    void write_string(std::string_view str) {
+        os.write(str.data(), (std::streamsize)str.size());
+        os.put(0);
+    }
+
+    void write_cell_pos(CPos pos) {
+        write_i32(pos.x);
+        write_i32(pos.y);
+    }
+
+    void write_cell_ref(const CellReference& cell) {
+        write_cell_pos(cell.pos);
+        write_i8((int8_t)cell.x_absolute);
+        write_i8((int8_t)cell.y_absolute);
+    }
+
+    void _inner_write_expression(const Expression& expr) {
+        write_i8((int8_t)expr.index());
+        // std::monostate
+        // double
+        // std::string
+        // CellReference
+        // CellRange
+        // Function
+        switch (expr.index()) {
+            case 0:
+                break;
+            case 1:
+                write_double(std::get<double>(expr));
+                break;
+            case 2:
+                write_string(std::get<std::string>(expr));
+                break;
+            case 3: {
+                CellReference ref = std::get<CellReference>(expr);
+                write_cell_ref(ref);
+                break;
+            }
+            case 4: {
+                CellRange range = std::get<CellRange>(expr);
+                write_cell_ref(range.start);
+                write_cell_ref(range.end);
+                break;
+            }
+            case 5: {
+                Function function = std::get<Function>(expr);
+                write_i8((int8_t)function.kind);
+                break;
+            };
+            default:
+                assert(false);
+        }
+    }
+
+    void write_expression(const Expression& expr) {
+        auto& unconst = const_cast<Expression&>(expr);
+        Cell::visit_expression(unconst, [&](Expression& expr) {
+            _inner_write_expression(expr);
+        });
+        write_i8(-1);
+    }
+};
+
+class StreamReader {
+    std::vector<char> buffer;
+    std::istream& os;
+
+  public:
+    StreamReader(std::istream& os) : os(os) {}
+
+    int8_t read_i8() {
+        int8_t value = 0;
+        os.read(reinterpret_cast<char*>(&value), sizeof(int8_t));
+        return value;
+    }
+
+    int32_t read_i32() {
+        int32_t value = 0;
+        os.read(reinterpret_cast<char*>(&value), sizeof(int32_t));
+        return value;
+    }
+
+    int64_t read_i64() {
+        int64_t value = 0;
+        os.read(reinterpret_cast<char*>(&value), sizeof(int64_t));
+        return value;
+    }
+
+    double read_double() {
+        double value = 0;
+        os.read(reinterpret_cast<char*>(&value), sizeof(double));
+        return value;
+    }
+
+    std::string_view read_string() {
+        buffer.clear();
+        if (os.bad()) {
+            return "";
+        }
+
+        while (true) {
+            int c = os.get();
+            if (c == EOF || c == 0) {
+                break;
+            }
+            buffer.push_back((char)c);
+        }
+
+        return std::string_view(buffer.data(), buffer.size());
+    }
+
+    CPos read_cell_pos() {
+        CPos pos {};
+        pos.x = read_i32();
+        pos.y = read_i32();
+        return pos;
+    }
+
+    CellReference read_cell_ref() {
+        CellReference cell {};
+        cell.pos = read_cell_pos();
+        cell.x_absolute = (bool)read_i8();
+        cell.y_absolute = (bool)read_i8();
+        return cell;
+    }
+
+    bool _inner_read_expression(ExpressionBuilder& builder) {
+        int8_t kind = read_i8();
+        // std::monostate
+        // double
+        // std::string
+        // CellReference
+        // CellRange
+        // Function
+        switch (kind) {
+            case 0:
+                builder.valUndefined();
+                break;
+            case 1: {
+                auto val = read_double();
+                builder.valNumber(val);
+                break;
+            }
+            case 2: {
+                auto val = read_string();
+                builder.valString(std::string(val));
+                break;
+            }
+            case 3: {
+                CellReference val = read_cell_ref();
+                builder.rawValReference(val);
+                break;
+            }
+            case 4: {
+                CellReference start = read_cell_ref();
+                CellReference end = read_cell_ref();
+                builder.rawValRange(CellRange {start, end});
+                break;
+            }
+            case 5: {
+                FunctionKind function = (FunctionKind)read_i8();
+                builder.rawFuncCall(function);
+                break;
+            };
+            default:
+                return false;
+        }
+        return true;
+    }
+
+    void read_expression(ExpressionBuilder& builder) {
+        while (_inner_read_expression(builder)) {}
+    }
+};
+
 class CSpreadsheet {
     std::map<CPos, Cell> cells;
     std::set<std::pair<CPos, CPos>> edges;
@@ -499,21 +714,62 @@ class CSpreadsheet {
   public:
     static unsigned capabilities() {
         return SPREADSHEET_CYCLIC_DEPS | SPREADSHEET_FUNCTIONS
-            | SPREADSHEET_SPEED
-            //  | SPREADSHEET_FILE_IO
-            ;
+            | SPREADSHEET_SPEED | SPREADSHEET_FILE_IO;
     }
 
     CSpreadsheet() {}
 
     bool load(std::istream& is) {
-        assert(0 && "unsupported");
-        return false;
+        StreamReader w(is);
+
+        int64_t check = w.read_i64();
+        if (check != 0x398267FE) {
+            return false;
+        }
+
+        cells.clear();
+        edges.clear();
+
+        ExpressionBuilder builder {};
+
+        int64_t cells_len = w.read_i64();
+        for (int64_t i = 0; i < cells_len; i++) {
+            CPos pos = w.read_cell_pos();
+            w.read_expression(builder);
+            Cell cell(builder.finish());
+
+            cells.insert({pos, cell});
+        }
+
+        int64_t edges_len = w.read_i64();
+        for (int64_t i = 0; i < edges_len; i++) {
+            CPos a = w.read_cell_pos();
+            CPos b = w.read_cell_pos();
+
+            edges.insert({a, b});
+        }
+
+        return !is.bad();
     }
 
     bool save(std::ostream& os) const {
-        assert(0 && "unsupported");
-        return false;
+        StreamWriter w(os);
+
+        w.write_i64(0x398267FE);
+
+        w.write_i64((int64_t)cells.size());
+        for (auto& pair : cells) {
+            w.write_cell_pos(pair.first);
+            w.write_expression(pair.second.expression);
+        }
+
+        w.write_i64((int64_t)edges.size());
+        for (auto& pair : edges) {
+            w.write_cell_pos(pair.first);
+            w.write_cell_pos(pair.second);
+        }
+
+        return !os.bad();
     }
 
     void remove_cell_dependency(CPos from, CPos to) {
@@ -933,8 +1189,8 @@ class CSpreadsheet {
         for (int y = y_start;; y += y_d) {
             for (int x = x_start;; x += x_d) {
                 CPos src_(x, y);
-            CPos dst_ = src_ + offset;
-            copyCell(src_, dst_);
+                CPos dst_ = src_ + offset;
+                copyCell(src_, dst_);
                 if (x == x_end) {
                     break;
                 }
