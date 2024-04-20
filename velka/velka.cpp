@@ -752,10 +752,30 @@ class CSpreadsheet {
                         const Expression& b = fun.arguments[1];
 
                         if (std::holds_alternative<std::string>(a)
-                            && std::holds_alternative<std::string>(b)) {
-                            const std::string& a_ = std::get<std::string>(a);
-                            const std::string& b_ = std::get<std::string>(b);
-                            return CValue(a_ + b_);
+                            || std::holds_alternative<std::string>(b)) {
+                            std::string buf;
+
+                            if (std::holds_alternative<std::string>(a)) {
+                                buf = std::get<std::string>(a);
+                            } else if (std::holds_alternative<double>(a)) {
+                                buf = std::to_string(std::get<double>(a));
+                            } else {
+                                throw std::invalid_argument(
+                                    "Unexpected type in + operator"
+                                );
+                            }
+
+                            if (std::holds_alternative<std::string>(b)) {
+                                buf += std::get<std::string>(b);
+                            } else if (std::holds_alternative<double>(b)) {
+                                buf += std::to_string(std::get<double>(b));
+                            } else {
+                                throw std::invalid_argument(
+                                    "Unexpected type in + operator"
+                                );
+                            }
+
+                            return CValue(buf);
                         }
 
                         return numeric_binary_operator(
