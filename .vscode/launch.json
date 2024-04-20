@@ -36,6 +36,19 @@
                 "group": "",
                 "order": 1
             }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug run existing binary",
+            "program": "${workspaceFolder}/out/velka.bin",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "presentation": {
+                "hidden": false,
+                "group": "",
+                "order": 1
+            }
         }
     ]
 }
