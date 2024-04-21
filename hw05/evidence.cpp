@@ -31,6 +31,17 @@ std::string toString(const T_& x) {
     return oss.str();
 }
 
+template<typename T>
+void compare(const T& n, std::string expected) {
+    std::string got = toString(n);
+    if (got != expected) {
+        std::cout << "\nExpected:\n" << expected;
+        std::cout << "\nGot:     \n" << got;
+
+        assert(0);
+    }
+}
+
 int main() {
     CNetwork n("FIT network");
     n.addComputer(
@@ -58,7 +69,8 @@ int main() {
                          .addComponent(CCPU(4, 2500))
                          .addAddress("2001:718:2:2901::238")
                          .addComponent(CMemory(8000)));
-    assert ( toString ( n ) ==
+    compare(
+        n,
     "Network: FIT network\n"
     "+-Host: progtest.fit.cvut.cz\n"
     "| +-147.32.232.142\n"
@@ -83,20 +95,25 @@ int main() {
     "  +-147.32.232.238\n"
     "  +-2001:718:2:2901::238\n"
     "  +-CPU, 4 cores @ 2500MHz\n"
-    "  \\-Memory, 8000 MiB\n" );
+        "  \\-Memory, 8000 MiB\n"
+    );
+    n = n;
     CNetwork x = n;
     auto c = x.findComputer("imap.fit.cvut.cz");
-    assert ( toString ( *c ) ==
+    compare(
+        *c,
     "Host: imap.fit.cvut.cz\n"
     "+-147.32.232.238\n"
     "+-2001:718:2:2901::238\n"
     "+-CPU, 4 cores @ 2500MHz\n"
-    "\\-Memory, 8000 MiB\n" );
+        "\\-Memory, 8000 MiB\n"
+    );
     c->addComponent(CDisk(CDisk::MAGNETIC, 1000)
                         .addPartition(100, "system")
                         .addPartition(200, "WWW")
                         .addPartition(700, "mail"));
-    assert ( toString ( x ) ==
+    compare(
+        x,
     "Network: FIT network\n"
     "+-Host: progtest.fit.cvut.cz\n"
     "| +-147.32.232.142\n"
@@ -125,8 +142,10 @@ int main() {
     "  \\-HDD, 1000 GiB\n"
     "    +-[0]: 100 GiB, system\n"
     "    +-[1]: 200 GiB, WWW\n"
-    "    \\-[2]: 700 GiB, mail\n" );
-    assert ( toString ( n ) ==
+        "    \\-[2]: 700 GiB, mail\n"
+    );
+    compare(
+        n,
     "Network: FIT network\n"
     "+-Host: progtest.fit.cvut.cz\n"
     "| +-147.32.232.142\n"
@@ -151,7 +170,8 @@ int main() {
     "  +-147.32.232.238\n"
     "  +-2001:718:2:2901::238\n"
     "  +-CPU, 4 cores @ 2500MHz\n"
-    "  \\-Memory, 8000 MiB\n" );
+        "  \\-Memory, 8000 MiB\n"
+    );
     return EXIT_SUCCESS;
 }
 #endif /* __PROGTEST__ */
