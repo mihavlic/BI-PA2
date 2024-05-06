@@ -53,21 +53,6 @@ struct Node {
     Node(SequenceIndex start, SequenceIndex end) : start(start), end(end) {}
 };
 
-class NewType {
-    char inner;
-
-  public:
-    NewType(char c) : inner(c) {}
-
-    NewType& operator=(const NewType& other) = default;
-
-    std::strong_ordering operator<=>(const NewType& other) const = default;
-
-    friend std::ostream& operator<<(std::ostream& os, const NewType& t) {
-        return os << t.inner;
-    }
-};
-
 template<typename T>
 struct SequenceItem {
     const T* ptr = nullptr;
@@ -122,13 +107,13 @@ void make_combinations(
 
 template<typename T>
 class CSelfMatch {
-    std::vector<T> items {};
-    mutable std::vector<Node> nodes {};
+    std::shared_ptr<std::vector<T>> items {};
+    std::vector<Node> nodes {};
 
-    mutable int remainder = 0;
-    mutable int active_len = 0;
-    mutable SequenceIndex active_edge_prefix_index = 0;
-    mutable NodeHandle active_node = ROOT_NODE;
+    int remainder = 0;
+    int active_len = 0;
+    SequenceIndex active_edge_prefix_index = 0;
+    NodeHandle active_node = ROOT_NODE;
 
   public:
     CSelfMatch() {
@@ -136,11 +121,13 @@ class CSelfMatch {
     }
 
     template<typename I>
-    CSelfMatch(I start, I end) : items(start, end) {
+    CSelfMatch(I start, I end) :
+        items(std::make_shared<std::vector<T>>(start, end)) {
         build();
     }
 
-    CSelfMatch(std::initializer_list<T> items) : items(items) {
+    CSelfMatch(std::initializer_list<T> items) :
+        items(std::make_shared<std::vector<T>>(items)) {
         auto a = std::vector(items);
         build();
     }
@@ -151,18 +138,18 @@ class CSelfMatch {
 
     void build() {
         active_node = new_node(0, 0);
-        for (SequenceIndex pos = 0; pos < (SequenceIndex)items.size(); pos++) {
+        for (SequenceIndex pos = 0; pos < (SequenceIndex)items->size(); pos++) {
             extend_suffix(pos);
         }
     }
 
     SequenceItem<T> get(SequenceIndex item) {
         if (item == SEQUENCE_END) {
-            return &items.back();
-        } else if (item >= (SequenceIndex)items.size()) {
+            return &items->back();
+        } else if (item >= (SequenceIndex)items->size()) {
             return nullptr;
         } else {
-            return &items[item];
+            return &(*items)[item];
         }
     }
 
@@ -216,7 +203,7 @@ class CSelfMatch {
     }
 
     SequenceIndex edge_length(NodeHandle handle, SequenceIndex len) const {
-        Node& node = nodes[handle];
+        const Node& node = nodes[handle];
         SequenceIndex start = node.start;
         SequenceIndex end = node.end;
         if (end == -1) {
@@ -297,7 +284,7 @@ class CSelfMatch {
     }
 
     void flush() {
-        extend_suffix((SequenceIndex)items.size());
+        extend_suffix((SequenceIndex)items->size());
     }
 
     void print() {
@@ -335,8 +322,8 @@ class CSelfMatch {
 
 #ifdef TEST_EXTRA_INTERFACE
     void push_back(T element) {
-        items.push_back(element);
-        extend_suffix((SequenceIndex)(items.size() - 1));
+        items->push_back(element);
+        extend_suffix((SequenceIndex)(items->size() - 1));
     }
 
     template<typename... Aargs>
@@ -350,7 +337,7 @@ class CSelfMatch {
     int collect_leaf_counts(NodeHandle handle, SequenceIndex start, F fun) {
         Node& node = nodes[handle];
 
-        SequenceIndex offset = start + edge_length(handle, items.size());
+        SequenceIndex offset = start + edge_length(handle, items->size());
 
         if (node.children.empty()) {
             node.suffix_link = 1;
@@ -366,53 +353,23 @@ class CSelfMatch {
         return node.suffix_link;
     }
 
-    template<typename F>
-    void inspect_annotated_tree(F fun) const {
-        CSelfMatch<T>* crimes = const_cast<CSelfMatch<T>*>(this);
-
-        std::vector<Node> _nodes = crimes->nodes;
-        int _remainder = crimes->remainder;
-        int _active_len = crimes->active_len;
-        SequenceIndex _active_edge_prefix_index =
-            crimes->active_edge_prefix_index;
-        NodeHandle _active_node = crimes->active_node;
-
-        crimes->flush();
-        fun(*crimes);
-
-        std::swap(crimes->nodes, _nodes);
-        std::swap(crimes->remainder, _remainder);
-        std::swap(crimes->active_len, _active_len);
-        std::swap(crimes->active_edge_prefix_index, _active_edge_prefix_index);
-        std::swap(crimes->active_node, _active_node);
-    }
-
     void collect_leaf_indices(
         NodeHandle handle,
         SequenceIndex path_length,
         std::vector<SequenceIndex>& indices
     ) const {
-        Node& node = nodes[handle];
+        const Node& node = nodes[handle];
 
         if (node.children.empty()) {
             indices.push_back(node.start - path_length);
             return;
         }
 
-        SequenceIndex offset = path_length + edge_length(handle, items.size());
+        SequenceIndex offset = path_length + edge_length(handle, items->size());
         for (auto child : node.children) {
             collect_leaf_indices(child, offset, indices);
         }
     }
-
-    // template<typename F>
-    // void visit_nodes(NodeHandle handle, F fun) const {
-    //     const Node& node = nodes[handle];
-    //     fun(node);
-    //     for (auto child : node.children) {
-    //         visit_nodes(child, fun);
-    //     }
-    // }
 
     size_t sequenceLen(size_t n) const {
         if (n == 0) {
@@ -421,20 +378,21 @@ class CSelfMatch {
 
         NodeHandle max_len = 0;
 
-        inspect_annotated_tree([&](CSelfMatch<T>& tree) {
-            tree.collect_leaf_counts(
-                ROOT_NODE,
-                0,
-                [&](NodeHandle handle,
-                    const Node& node,
-                    SequenceIndex start,
-                    SequenceIndex end) {
-                    if (node.suffix_link >= (NodeHandle)n) {
-                        max_len = std::max(max_len, end);
-                    }
+        CSelfMatch<T> copy = *this;
+        copy.flush();
+
+        copy.collect_leaf_counts(
+            ROOT_NODE,
+            0,
+            [&](NodeHandle handle,
+                const Node& node,
+                SequenceIndex start,
+                SequenceIndex end) {
+                if (node.suffix_link >= (NodeHandle)n) {
+                    max_len = std::max(max_len, end);
                 }
-            );
-        });
+            }
+        );
 
         return (size_t)max_len;
     }
@@ -445,60 +403,61 @@ class CSelfMatch {
             throw std::invalid_argument("n must be nonzero");
         }
 
+        CSelfMatch<T> copy = *this;
+        copy.flush();
+
+        NodeHandle max_len = 1;
+        std::vector<std::pair<NodeHandle, SequenceIndex>> nodes;
+
+        copy.collect_leaf_counts(
+            ROOT_NODE,
+            0,
+            [&](NodeHandle handle,
+                const Node& node,
+                SequenceIndex start,
+                SequenceIndex end) {
+                if (node.suffix_link >= (SequenceIndex)N) {
+                    if (end > max_len) {
+                        max_len = end;
+                        nodes.clear();
+                    }
+                    if (end >= max_len) {
+                        nodes.push_back({handle, start});
+                    }
+                }
+            }
+        );
+
         std::vector<int> scratch;
         std::vector<int> indices;
         std::vector<int> combinations;
         std::vector<std::array<size_t, N>> output;
 
-        inspect_annotated_tree([&](CSelfMatch<T>& tree) {
-            NodeHandle max_len = 1;
-            std::vector<std::pair<NodeHandle, SequenceIndex>> nodes;
+        for (size_t i = 0; i < nodes.size(); i++) {
+            indices.clear();
+            scratch.clear();
+            combinations.clear();
 
-            tree.collect_leaf_counts(
-                ROOT_NODE,
-                0,
-                [&](NodeHandle handle,
-                    const Node& node,
-                    SequenceIndex start,
-                    SequenceIndex end) {
-                    if (node.suffix_link >= (SequenceIndex)N) {
-                        if (end > max_len) {
-                            max_len = end;
-                            nodes.clear();
-                        }
-                        if (end >= max_len) {
-                            nodes.push_back({handle, start});
-                        }
-                    }
-                }
+            copy.collect_leaf_indices(nodes[i].first, nodes[i].second, indices);
+
+            make_combinations(
+                indices.data(),
+                (int)indices.size(),
+                N,
+                scratch,
+                combinations
             );
 
-            for (size_t i = 0; i < nodes.size(); i++) {
-                indices.clear();
-                scratch.clear();
-                combinations.clear();
-
-                collect_leaf_indices(nodes[i].first, nodes[i].second, indices);
-
-                make_combinations(
-                    indices.data(),
-                    (int)indices.size(),
-                    N,
-                    scratch,
-                    combinations
-                );
-
-                for (size_t i = 0; i < combinations.size(); i += N) {
-                    std::array<size_t, N> arr {};
-                    for (size_t j = 0; j < N; j++) {
-                        arr[j] = (size_t)combinations[i + j];
-                    }
-
-                    std::sort(arr.begin(), arr.end());
-                    output.push_back(arr);
+            for (size_t i = 0; i < combinations.size(); i += N) {
+                std::array<size_t, N> arr {};
+                for (size_t j = 0; j < N; j++) {
+                    arr[j] = (size_t)combinations[i + j];
                 }
+
+                std::sort(arr.begin(), arr.end());
+                output.push_back(arr);
             }
-        });
+        }
 
         return output;
     }
