@@ -1,14 +1,7 @@
-#include <cstddef>
 #ifndef __PROGTEST__
     #include <algorithm>
     #include <cassert>
-    #include <functional>
-    #include <iomanip>
     #include <iostream>
-    #include <list>
-    #include <map>
-    #include <memory>
-    #include <set>
     #include <sstream>
     #include <string>
     #include <vector>
