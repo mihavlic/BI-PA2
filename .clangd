@@ -8,6 +8,7 @@ Diagnostics:
       ]
     Remove: [
         bugprone-easily-swappable-parameters,
+        bugprone-exception-escape
         # readability-identifier-length,
         # readability-magic-numbers,
         # readability-implicit-bool-conversion,
