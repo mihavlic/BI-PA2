@@ -968,6 +968,27 @@ class CSpreadsheet {
                         });
                         return CValue((double)count);
                     }
+                    case FunctionKind::COUNT_VAL: {
+                        CValue val = evaluate_expression(fun.arguments[0]);
+                        CellRange range = std::get<CellRange>(fun.arguments[1]);
+
+                        unsigned count = 0;
+                        range.for_cells([&](CPos pos) {
+                            const CValue& value = getValue_internal(pos);
+                            if (val == value) {
+                                count++;
+                            }
+                        });
+                        return CValue((double)count);
+                    }
+                    case FunctionKind::IF: {
+                        CValue cond = evaluate_expression(fun.arguments[0]);
+                        if (std::get<double>(cond) != 0.0) {
+                            return evaluate_expression(fun.arguments[1]);
+                        } else {
+                            return evaluate_expression(fun.arguments[2]);
+                        }
+                    }
                     case FunctionKind::MIN: {
                         CellRange range = std::get<CellRange>(fun.arguments[0]);
                         return reduce_range(
@@ -991,19 +1012,6 @@ class CSpreadsheet {
                     case FunctionKind::NEG: {
                         CValue val = evaluate_expression(fun.arguments[0]);
                         return CValue(-std::get<double>(val));
-                    }
-                    case FunctionKind::COUNT_VAL: {
-                        CValue val = evaluate_expression(fun.arguments[0]);
-                        CellRange range = std::get<CellRange>(fun.arguments[1]);
-
-                        unsigned count = 0;
-                        range.for_cells([&](CPos pos) {
-                            const CValue& value = getValue_internal(pos);
-                            if (val == value) {
-                                count++;
-                            }
-                        });
-                        return CValue((double)count);
                     }
                     case FunctionKind::POW: {
                         return numeric_binary_operator(
@@ -1116,14 +1124,6 @@ class CSpreadsheet {
                                 return a == b;
                             }
                         );
-                    }
-                    case FunctionKind::IF: {
-                        CValue cond = evaluate_expression(fun.arguments[0]);
-                        if (std::get<double>(cond) != 0.0) {
-                            return evaluate_expression(fun.arguments[1]);
-                        } else {
-                            return evaluate_expression(fun.arguments[2]);
-                        }
                     }
                     default:
                         break;
