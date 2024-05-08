@@ -10,6 +10,7 @@
     #include <map>
     #include <memory>
     #include <set>
+    #include <sstream>
     #include <stdexcept>
     #include <string>
     #include <utility>
@@ -30,7 +31,6 @@
 // #include <optional>
 // #include <queue>
 // #include <span>
-// #include <sstream>
 // #include <stack>
 // #include <unordered_map>
 // #include <unordered_set>
@@ -43,7 +43,6 @@ constexpr unsigned SPREADSHEET_CYCLIC_DEPS = 0x01;
 constexpr unsigned SPREADSHEET_FUNCTIONS = 0x02;
 constexpr unsigned SPREADSHEET_FILE_IO = 0x04;
 constexpr unsigned SPREADSHEET_SPEED = 0x08;
-constexpr unsigned SPREADSHEET_PARSER = 0x10;
 #endif /* __PROGTEST__ */
 
 constexpr CValue UNDEFINED = CValue();
@@ -91,9 +90,12 @@ bool parse_cell_position(
                || ('a' <= str[i] && str[i] <= 'z'))) {
         x_empty = false;
         x *= 26;
+        // A in excel-numbering is actually a 1
+        // otherwise AAAAB == 0000B == B
         x += std::tolower(str[i]) - 'a' + 1;
         i++;
     }
+
     if (i < str.size() && str[i] == '$') {
         y_is_absolute = true;
         i++;
@@ -388,6 +390,11 @@ class ExpressionBuilder: public CExprBuilder {
         push_function(FunctionKind::GE);
     }
 
+// compiler bug?
+// https://gcc.gnu.org/bugzilla/show_bug.cgi?format=multiple&id=107138
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+
     void valUndefined() {
         push(Expression());
     }
@@ -397,7 +404,7 @@ class ExpressionBuilder: public CExprBuilder {
     }
 
     virtual void valString(std::string val) {
-        push(Expression(val));
+        push(std::move(val));
     }
 
     virtual void valReference(std::string val) {
@@ -415,6 +422,8 @@ class ExpressionBuilder: public CExprBuilder {
     virtual void valRange(std::string val) {
         push(CellRange(val));
     }
+
+#pragma GCC diagnostic pop
 
     void rawFuncCall(FunctionKind kind) {
         push_function(kind);
@@ -519,6 +528,10 @@ class StreamWriter {
 
   public:
     StreamWriter(std::ostream& os) : os(os) {}
+
+    std::ostream& get_inner() {
+        return os;
+    }
 
     void write_i8(int8_t value) {
         os.write(reinterpret_cast<const char*>(&value), sizeof(int8_t));
@@ -711,6 +724,46 @@ class StreamReader {
     }
 };
 
+// fnv hashing implementation from
+// https://gist.github.com/hwei/1950649d523afd03285c
+class FnvHasher {
+    unsigned int state;
+
+    static const unsigned int OFFSET_BASIS = 2166136261u;
+    static const unsigned int FNV_PRIME = 16777619u;
+
+  public:
+    FnvHasher() : state(OFFSET_BASIS) {}
+
+    inline void hash_char(char c) {
+        state ^= c;
+        state *= FNV_PRIME;
+    }
+
+    void hash_istream(std::istream& is) {
+        if (is.fail()) {
+            return;
+        }
+
+        auto position = is.tellg();
+
+        while (true) {
+            int c = is.get();
+            if (c == EOF) {
+                break;
+            }
+            hash_char((char)c);
+        }
+
+        is.clear();
+        is.seekg(position);
+    }
+
+    unsigned int finish() {
+        return state;
+    }
+};
+
 class CSpreadsheet {
     std::map<CPos, Cell> cells;
     std::set<std::pair<CPos, CPos>> edges;
@@ -731,8 +784,13 @@ class CSpreadsheet {
     bool load(std::istream& is) {
         StreamReader w(is);
 
-        int64_t check = w.read_i64();
-        if (check != 0x398267FE) {
+        int64_t saved_hash = w.read_i64();
+
+        FnvHasher hasher;
+        hasher.hash_istream(is);
+        unsigned int hash = hasher.finish();
+
+        if (hash != saved_hash) {
             return false;
         }
 
@@ -758,13 +816,16 @@ class CSpreadsheet {
             edges.insert({a, b});
         }
 
-        return !is.bad();
+        return !is.fail();
     }
 
     bool save(std::ostream& os) const {
-        StreamWriter w(os);
+        std::stringstream ss;
 
-        w.write_i64(0x398267FE);
+        StreamWriter w(ss);
+
+        // leave space for hash
+        w.write_i64(0);
 
         w.write_i64((int64_t)cells.size());
         for (auto& pair : cells) {
@@ -778,7 +839,21 @@ class CSpreadsheet {
             w.write_cell_pos(pair.second);
         }
 
-        return !os.bad();
+        {
+            FnvHasher hasher;
+            ss.seekp(8);
+            ss.seekg(8);
+            hasher.hash_istream(ss);
+            unsigned int hash = hasher.finish();
+
+            w.get_inner().seekp(0);
+            w.write_i64(hash);
+        }
+
+        ss.seekg(0);
+        os.write(ss.view().data(), (long)ss.view().size());
+
+        return !os.fail();
     }
 
     void remove_cell_dependency(CPos from, CPos to) {
@@ -790,43 +865,34 @@ class CSpreadsheet {
     }
 
     void mark_dirty(CPos pos) {
-        for (auto& cell : cells) {
-            cell.second.dirty = true;
+        auto entry = cell_call_stack.insert(pos);
+
+        if (!entry.second) {
+            return;
         }
 
-        // auto entry = cell_call_stack.insert(pos);
+        {
+            auto entry = cells.find(pos);
+            if (entry == cells.end()) {
+                return;
+            }
 
-        // if (!entry.second) {
-        //     return;
-        // }
+            Cell& cell_entry = entry->second;
+            cell_entry.dirty = true;
 
-        // {
-        //     auto entry = cells.find(pos);
-        //     if (entry == cells.end()) {
-        //         return;
-        //     }
+            auto children =
+                edges.lower_bound(std::make_pair(pos, CPos(INT_MIN, INT_MIN)));
 
-        //     Cell& cell_entry = entry->second;
-        //     cell_entry.dirty = true;
+            for (; children != edges.end() && children->first == pos;
+                 children++) {
+                mark_dirty(children->second);
+            }
+        }
 
-        //     auto children =
-        //         edges.lower_bound(std::make_pair(pos, CPos(INT_MIN, INT_MIN)));
-
-        //     for (; children != edges.end() && children->first == pos;
-        //          children++) {
-        //         mark_dirty(children->second);
-        //     }
-        // }
-
-        // cell_call_stack.erase(entry.first);
+        cell_call_stack.erase(entry.first);
     }
 
     bool setCell_internal(CPos pos, Cell cell) {
-        cells.insert_or_assign(pos, std::move(cell));
-        mark_dirty(pos);
-
-        return true;
-
         auto entry = cells.find(pos);
         if (entry != cells.end()) {
             entry->second.on_cell_references([&](CPos c) {
@@ -842,9 +908,7 @@ class CSpreadsheet {
             this->add_cell_dependency(c, pos);
         });
 
-        entry->second.dirty = true;
         mark_dirty(pos);
-        assert(cell_call_stack.empty());
 
         return true;
     }
