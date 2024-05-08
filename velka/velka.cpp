@@ -1,39 +1,40 @@
 #ifndef __PROGTEST__
     #include <algorithm>
-    // #include <array>
     #include <cassert>
-    // #include <cctype>
-    // #include <cfloat>
-    // #include <charconv>
-    #include <climits>
     #include <cmath>
     #include <compare>
     #include <cstdio>
     #include <cstdlib>
     #include <cstring>
-    // #include <fstream>
-    // #include <functional>
-    // #include <iomanip>
     #include <iostream>
-    // #include <iterator>
-    // #include <list>
     #include <map>
     #include <memory>
-    // #include <optional>
-    // #include <queue>
     #include <set>
-    // #include <span>
-    // #include <sstream>
-    // #include <stack>
     #include <stdexcept>
     #include <string>
-    // #include <unordered_map>
-    // #include <unordered_set>
     #include <utility>
     #include <variant>
     #include <vector>
 
     #include "expression.h"
+
+// #include <array>
+// #include <cctype>
+// #include <cfloat>
+// #include <charconv>
+// #include <fstream>
+// #include <functional>
+// #include <iomanip>
+// #include <iterator>
+// #include <list>
+// #include <optional>
+// #include <queue>
+// #include <span>
+// #include <sstream>
+// #include <stack>
+// #include <unordered_map>
+// #include <unordered_set>
+
 using namespace std::literals;
 
 using CValue = std::variant<std::monostate, double, std::string>;
@@ -70,7 +71,7 @@ enum class FunctionKind {
     EQ,  // = / ==
 };
 
-void parse_cell_position(
+bool parse_cell_position(
     std::string_view str,
     size_t& i,
     int& x,
@@ -78,13 +79,19 @@ void parse_cell_position(
     bool& x_is_absolute,
     bool& y_is_absolute
 ) {
+    bool x_empty = true;
+    bool y_empty = true;
+
     if (i < str.size() && str[i] == '$') {
         x_is_absolute = true;
         i++;
     }
-    while (i < str.size() && 'A' <= str[i] && str[i] <= 'Z') {
+    while (i < str.size()
+           && (('A' <= str[i] && str[i] <= 'Z')
+               || ('a' <= str[i] && str[i] <= 'z'))) {
+        x_empty = false;
         x *= 26;
-        x += str[i] - 'A';
+        x += std::tolower(str[i]) - 'a' + 1;
         i++;
     }
     if (i < str.size() && str[i] == '$') {
@@ -92,10 +99,12 @@ void parse_cell_position(
         i++;
     }
     while (i < str.size() && '0' <= str[i] && str[i] <= '9') {
+        y_empty = false;
         y *= 10;
         y += str[i] - '0';
         i++;
     }
+    return !x_empty && !y_empty;
 }
 
 class CPos {
@@ -109,11 +118,9 @@ class CPos {
         size_t i = 0;
         bool x_absolute = false;
         bool y_absolute = false;
-        parse_cell_position(str, i, x, y, x_absolute, y_absolute);
-        if (x_absolute || y_absolute) {
-            throw std::invalid_argument("Absolute axis position in CPos");
-        }
-        if (i < str.size()) {
+        bool success =
+            parse_cell_position(str, i, x, y, x_absolute, y_absolute);
+        if (!success || x_absolute || y_absolute || i < str.size()) {
             throw std::invalid_argument("mlem");
         }
     }
@@ -143,8 +150,8 @@ struct CellReference {
 
     CellReference() {}
 
-    static void parse(CellReference& self, std::string_view str, size_t& i) {
-        parse_cell_position(
+    static bool parse(CellReference& self, std::string_view str, size_t& i) {
+        return parse_cell_position(
             str,
             i,
             self.pos.x,
@@ -156,8 +163,8 @@ struct CellReference {
 
     CellReference(std::string_view str) {
         size_t i = 0;
-        CellReference::parse(*this, str, i);
-        if (i < str.size()) {
+        bool success = CellReference::parse(*this, str, i);
+        if (!success || i < str.size()) {
             throw std::invalid_argument("mlem");
         }
     }
@@ -185,22 +192,23 @@ struct CellRange {
 
     CellRange(std::string_view str) {
         size_t i = 0;
-        CellReference::parse(start, str, i);
+        bool success = true;
+        success &= CellReference::parse(start, str, i);
         if (i >= str.size() || str[i] != ':') {
             throw std::invalid_argument("Missing ':' in cell range");
         }
         i++;
-        CellReference::parse(end, str, i);
+        success &= CellReference::parse(end, str, i);
 
-        if (i < str.size()) {
+        if (!success || i < str.size()) {
             throw std::invalid_argument("mlem");
         }
     }
 
     template<typename F>
     void for_cells(F fun) const {
-        for (int y = start.pos.y; y < end.pos.y; y++) {
-            for (int x = start.pos.x; x < end.pos.x; x++) {
+        for (int y = start.pos.y; y <= end.pos.y; y++) {
+            for (int x = start.pos.x; x <= end.pos.x; x++) {
                 fun(CPos(x, y));
             }
         }
@@ -226,9 +234,6 @@ struct Function {
         arguments = std::unique_ptr<Expression[]>(new Expression[count] {});
 
         for (size_t i = 0; i < count; i++) {
-            // use placement new instead of = assignment, because assignmend is deleted ...
-            // this does not run the destructor for the default Expression value
-            // this is okay because the default is std::monostate which contains nothing
             arguments[i] = copy.arguments[i];
         }
     }
@@ -443,7 +448,7 @@ class Cell {
     bool dirty = true;
 
   public:
-    Cell() {}
+    Cell() = delete;
 
     Cell(Expression expr) : expression(expr) {}
 
@@ -712,12 +717,16 @@ class CSpreadsheet {
     std::set<CPos> cell_call_stack;
 
   public:
+    CSpreadsheet() {}
+
+    CSpreadsheet(const CSpreadsheet& other) = default;
+    CSpreadsheet(CSpreadsheet&& other) = default;
+    CSpreadsheet& operator=(const CSpreadsheet& other) = default;
+
     static unsigned capabilities() {
         return SPREADSHEET_CYCLIC_DEPS | SPREADSHEET_FUNCTIONS
             | SPREADSHEET_SPEED | SPREADSHEET_FILE_IO;
     }
-
-    CSpreadsheet() {}
 
     bool load(std::istream& is) {
         StreamReader w(is);
@@ -781,42 +790,59 @@ class CSpreadsheet {
     }
 
     void mark_dirty(CPos pos) {
-        auto entry = cell_call_stack.insert(pos);
-
-        if (!entry.second) {
-            return;
+        for (auto& cell : cells) {
+            cell.second.dirty = true;
         }
 
-        cells[pos].dirty = true;
+        // auto entry = cell_call_stack.insert(pos);
 
-        auto children =
-            edges.lower_bound(std::make_pair(pos, CPos(INT_MIN, INT_MIN)));
+        // if (!entry.second) {
+        //     return;
+        // }
 
-        for (; children != edges.end() && children->first == pos; children++) {
-            mark_dirty(children->second);
-        }
+        // {
+        //     auto entry = cells.find(pos);
+        //     if (entry == cells.end()) {
+        //         return;
+        //     }
 
-        cell_call_stack.erase(entry.first);
+        //     Cell& cell_entry = entry->second;
+        //     cell_entry.dirty = true;
+
+        //     auto children =
+        //         edges.lower_bound(std::make_pair(pos, CPos(INT_MIN, INT_MIN)));
+
+        //     for (; children != edges.end() && children->first == pos;
+        //          children++) {
+        //         mark_dirty(children->second);
+        //     }
+        // }
+
+        // cell_call_stack.erase(entry.first);
     }
 
     bool setCell_internal(CPos pos, Cell cell) {
-        auto entry = cells.insert({pos, std::move(cell)});
-        Cell& cell_entry = entry.first->second;
+        cells.insert_or_assign(pos, std::move(cell));
+        mark_dirty(pos);
 
-        if (!entry.second) {
-            cell_entry.on_cell_references([pos, this](CPos c) {
+        return true;
+
+        auto entry = cells.find(pos);
+        if (entry != cells.end()) {
+            entry->second.on_cell_references([&](CPos c) {
                 this->remove_cell_dependency(c, pos);
             });
 
-            // only doing this if the first insert failed
-            // which should mean that the cell wasn't moved out of
-            cell_entry = std::move(cell);
+            entry->second = std::move(cell);
+        } else {
+            entry = cells.insert({pos, std::move(cell)}).first;
         }
 
-        cell_entry.on_cell_references([pos, this](CPos c) {
+        entry->second.on_cell_references([&](CPos c) {
             this->add_cell_dependency(c, pos);
         });
 
+        entry->second.dirty = true;
         mark_dirty(pos);
         assert(cell_call_stack.empty());
 
@@ -825,9 +851,8 @@ class CSpreadsheet {
 
     bool setCell(CPos pos, std::string contents) {
         try {
-            Cell cell(contents);
-            return setCell_internal(pos, cell);
-        } catch (...) {
+            return setCell_internal(pos, Cell(contents));
+        } catch (std::invalid_argument& e) {
             return false;
         }
     }
@@ -881,32 +906,33 @@ class CSpreadsheet {
 
     CValue comparison_binary_operator(
         const Function& function,
-        std::partial_ordering comparison,
-        bool invert
+        bool (*number_fun)(double a, double b),
+        bool (*string_fun)(std::string& a, std::string& b)
     ) {
         CValue a = evaluate_expression(function.arguments[0]);
         CValue b = evaluate_expression(function.arguments[1]);
 
-        std::partial_ordering order = std::partial_ordering::equivalent;
+        bool compare = false;
         if (std::holds_alternative<double>(a)
             && std::holds_alternative<double>(b)) {
-            order = std::get<double>(a) <=> std::get<double>(b);
+            compare = number_fun(std::get<double>(a), std::get<double>(b));
         } else if (std::holds_alternative<std::string>(a) && std::holds_alternative<std::string>(b)) {
-            order = std::get<std::string>(a) <=> std::get<std::string>(b);
+            compare =
+                string_fun(std::get<std::string>(a), std::get<std::string>(b));
         } else {
             return UNDEFINED;
         }
 
-        return CValue((double)((order == comparison) ^ invert));
+        return CValue((double)compare);
     }
 
-    CValue evaluate_expression(const Expression& expr) {
-        // std::monostate
-        // double
-        // std::string
-        // CellReference
-        // CellRange
-        // Function
+    CValue evaluate_expression_internal(const Expression& expr) {
+        // 0 std::monostate
+        // 1 double
+        // 2 std::string
+        // 3 CellReference
+        // 4 CellRange
+        // 5 Function
         switch (expr.index()) {
             case 0:
                 return UNDEFINED;
@@ -964,11 +990,7 @@ class CSpreadsheet {
                     }
                     case FunctionKind::NEG: {
                         CValue val = evaluate_expression(fun.arguments[0]);
-                        if (std::holds_alternative<double>(val)) {
-                            return CValue(-std::get<double>(val));
-                        } else {
-                            return UNDEFINED;
-                        }
+                        return CValue(-std::get<double>(val));
                     }
                     case FunctionKind::COUNT_VAL: {
                         CValue val = evaluate_expression(fun.arguments[0]);
@@ -977,14 +999,17 @@ class CSpreadsheet {
                         unsigned count = 0;
                         range.for_cells([&](CPos pos) {
                             const CValue& value = getValue_internal(pos);
-                            if (value != val) {
+                            if (val == value) {
                                 count++;
                             }
                         });
                         return CValue((double)count);
                     }
                     case FunctionKind::POW: {
-                        return numeric_binary_operator(fun, std::pow);
+                        return numeric_binary_operator(
+                            fun,
+                            [](double a, double b) { return std::pow(a, b); }
+                        );
                     }
                     case FunctionKind::MUL: {
                         return numeric_binary_operator(
@@ -993,32 +1018,31 @@ class CSpreadsheet {
                         );
                     }
                     case FunctionKind::DIV: {
-                        if (std::holds_alternative<double>(fun.arguments[1])) {
-                            if (std::get<double>(fun.arguments[1]) == 0.0) {
-                                return UNDEFINED;
-                            }
-                        }
                         return numeric_binary_operator(
                             fun,
-                            [](double a, double b) { return a / b; }
+                            [](double a, double b) {
+                                if (fabs(b) == 0.0) {
+                                    throw std::invalid_argument("Divide by zero"
+                                    );
+                                }
+                                return a / b;
+                            }
                         );
                     }
                     case FunctionKind::ADD: {
-                        const Expression& a = fun.arguments[0];
-                        const Expression& b = fun.arguments[1];
+                        CValue a = evaluate_expression(fun.arguments[0]);
+                        CValue b = evaluate_expression(fun.arguments[1]);
 
                         if (std::holds_alternative<std::string>(a)
                             || std::holds_alternative<std::string>(b)) {
                             std::string buf;
 
                             if (std::holds_alternative<std::string>(a)) {
-                                buf = std::get<std::string>(a);
+                                buf = std::get<std::string>(std::move(a));
                             } else if (std::holds_alternative<double>(a)) {
                                 buf = std::to_string(std::get<double>(a));
                             } else {
-                                throw std::invalid_argument(
-                                    "Unexpected type in + operator"
-                                );
+                                return UNDEFINED;
                             }
 
                             if (std::holds_alternative<std::string>(b)) {
@@ -1026,18 +1050,16 @@ class CSpreadsheet {
                             } else if (std::holds_alternative<double>(b)) {
                                 buf += std::to_string(std::get<double>(b));
                             } else {
-                                throw std::invalid_argument(
-                                    "Unexpected type in + operator"
-                                );
+                                return UNDEFINED;
                             }
 
                             return CValue(buf);
                         }
 
-                        return numeric_binary_operator(
-                            fun,
-                            [](double a, double b) { return a + b; }
-                        );
+                        double a_ = std::get<double>(a);
+                        double b_ = std::get<double>(b);
+
+                        return CValue(a_ + b_);
                     }
                     case FunctionKind::SUB: {
                         return numeric_binary_operator(
@@ -1048,51 +1070,56 @@ class CSpreadsheet {
                     case FunctionKind::LT: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::less,
-                            false
+                            [](double a, double b) { return a < b; },
+                            [](std::string& a, std::string& b) { return a < b; }
                         );
                     }
                     case FunctionKind::LE: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::greater,
-                            true
+                            [](double a, double b) { return a <= b; },
+                            [](std::string& a, std::string& b) {
+                                return a <= b;
+                            }
                         );
                     }
                     case FunctionKind::GT: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::greater,
-                            false
+                            [](double a, double b) { return a > b; },
+                            [](std::string& a, std::string& b) { return a > b; }
                         );
                     }
                     case FunctionKind::GE: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::less,
-                            true
+                            [](double a, double b) { return a >= b; },
+                            [](std::string& a, std::string& b) {
+                                return a >= b;
+                            }
                         );
                     }
                     case FunctionKind::NE: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::equivalent,
-                            true
+                            [](double a, double b) { return a != b; },
+                            [](std::string& a, std::string& b) {
+                                return a != b;
+                            }
                         );
                     }
                     case FunctionKind::EQ: {
                         return comparison_binary_operator(
                             fun,
-                            std::partial_ordering::equivalent,
-                            false
+                            [](double a, double b) { return a == b; },
+                            [](std::string& a, std::string& b) {
+                                return a == b;
+                            }
                         );
                     }
                     case FunctionKind::IF: {
-                        if (!std::holds_alternative<double>(fun.arguments[0])) {
-                            return UNDEFINED;
-                        }
-                        double cond = std::get<double>(fun.arguments[0]);
-                        if (cond != 0.0) {
+                        CValue cond = evaluate_expression(fun.arguments[0]);
+                        if (std::get<double>(cond) != 0.0) {
                             return evaluate_expression(fun.arguments[1]);
                         } else {
                             return evaluate_expression(fun.arguments[2]);
@@ -1106,10 +1133,20 @@ class CSpreadsheet {
                 break;
         }
         assert(0 && "Unhandled variant");
+        return UNDEFINED;
+    }
+
+    CValue evaluate_expression(const Expression& expr) {
+        try {
+            return evaluate_expression_internal(expr);
+        } catch (...) {
+            return UNDEFINED;
+        }
     }
 
     const CValue& getValue_internal(CPos pos) {
         static const CValue STATIC_UNDEFINED = CValue {};
+
         Cell* cell = get_cell(pos);
         if (!cell) {
             return STATIC_UNDEFINED;
@@ -1117,19 +1154,17 @@ class CSpreadsheet {
 
         if (cell->dirty) {
             auto previous = cell_call_stack.insert(pos);
+
             if (!previous.second) {
                 return STATIC_UNDEFINED;
             }
 
-            try {
-                cell->cached_value = evaluate_expression(cell->expression);
-            } catch (...) {
-                cell->cached_value = UNDEFINED;
-            }
-
+            cell->cached_value = evaluate_expression(cell->expression);
             cell->dirty = false;
+
             cell_call_stack.erase(pos);
         }
+
         return cell->cached_value;
     }
 

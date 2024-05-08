@@ -56,11 +56,39 @@ bool valueMatch(const CValue& r, const CValue& s) {
     return result;
 }
 
+bool exprMatch(CSpreadsheet& s, std::string expr, CValue value) {
+    CPos pos("A9999999");
+    s.setCell(pos, expr);
+    bool res = valueMatch(s.getValue(pos), value);
+    assert(res);
+    return res;
+}
+
 int main() {
     CSpreadsheet x0, x1;
     std::ostringstream oss;
     std::istringstream iss;
     std::string data;
+
+    assert(x0.setCell(CPos("A1"), "10"));
+    assert(x0.setCell(CPos("A2"), "10.0"));
+    assert(x0.setCell(CPos("A3"), "11.0"));
+    exprMatch(x0, "=A1 < A2", 0.0);
+    exprMatch(x0, "=A1 <= A2", 1.0);
+    exprMatch(x0, "=A1 > A2", 0.0);
+    exprMatch(x0, "=A1 >= A2", 1.0);
+    exprMatch(x0, "=A1 = A2", 1.0);
+    exprMatch(x0, "=A1 <> A2", 0.0);
+
+    exprMatch(x0, "=A1 < A3", 1.0);
+    exprMatch(x0, "=A1 <= A3", 1.0);
+    exprMatch(x0, "=A1 > A3", 0.0);
+    exprMatch(x0, "=A1 >= A3", 0.0);
+    exprMatch(x0, "=A1 = A3", 0.0);
+    exprMatch(x0, "=A1 <> A3", 1.0);
+
+    assert(!x0.setCell(CPos("A1"), "=A ** 6b"));
+
     assert(x0.setCell(CPos("A1"), "10"));
     assert(x0.setCell(CPos("A2"), "20.5"));
     assert(x0.setCell(CPos("A3"), "3e1"));
