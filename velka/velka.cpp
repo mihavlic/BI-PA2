@@ -19,22 +19,6 @@
 
     #include "expression.h"
 
-// #include <array>
-// #include <cctype>
-// #include <cfloat>
-// #include <charconv>
-// #include <fstream>
-// #include <functional>
-// #include <iomanip>
-// #include <iterator>
-// #include <list>
-// #include <optional>
-// #include <queue>
-// #include <span>
-// #include <stack>
-// #include <unordered_map>
-// #include <unordered_set>
-
 using namespace std::literals;
 
 using CValue = std::variant<std::monostate, double, std::string>;
@@ -66,13 +50,17 @@ enum class FunctionKind {
     LE,  // <=
     GT,  // >
     GE,  // >>
-    NE,  // <> / !=
-    EQ,  // = / ==
+    NE,  // !=
+    EQ,  // ==
 };
 
 bool parse_cell_position(
+    // input string
     std::string_view str,
+    // offset into str
     size_t& i,
+
+    // output variables
     int& x,
     int& y,
     bool& x_is_absolute,
@@ -90,7 +78,7 @@ bool parse_cell_position(
                || ('a' <= str[i] && str[i] <= 'z'))) {
         x_empty = false;
         x *= 26;
-        // A in excel-numbering is actually a 1
+        // A in excel numbering is actually a 1
         // otherwise AAAAB == 0000B == B
         x += std::tolower(str[i]) - 'a' + 1;
         i++;
@@ -122,8 +110,9 @@ class CPos {
         bool y_absolute = false;
         bool success =
             parse_cell_position(str, i, x, y, x_absolute, y_absolute);
+
         if (!success || x_absolute || y_absolute || i < str.size()) {
-            throw std::invalid_argument("mlem");
+            throw std::invalid_argument("Cpos parsing failed");
         }
     }
 
@@ -167,20 +156,19 @@ struct CellReference {
         size_t i = 0;
         bool success = CellReference::parse(*this, str, i);
         if (!success || i < str.size()) {
-            throw std::invalid_argument("mlem");
+            throw std::invalid_argument("CellReference parsing failed");
         }
     }
 
     CellReference(CPos pos) : pos(pos) {}
 
-    bool apply_relative_offset(std::pair<int, int> offset) {
+    void apply_relative_offset(std::pair<int, int> offset) {
         if (!x_absolute) {
             pos.x += offset.first;
         }
         if (!y_absolute) {
             pos.y += offset.second;
         }
-        return !x_absolute || !y_absolute;
     }
 };
 
@@ -203,10 +191,11 @@ struct CellRange {
         success &= CellReference::parse(end, str, i);
 
         if (!success || i < str.size()) {
-            throw std::invalid_argument("mlem");
+            throw std::invalid_argument("CellRange parsing failed");
         }
     }
 
+    // call closure for all cells in range
     template<typename F>
     void for_cells(F fun) const {
         for (int y = start.pos.y; y <= end.pos.y; y++) {
@@ -252,10 +241,10 @@ struct Function {
     }
 
     size_t argument_count() const {
-        return kind_argument_count(kind);
+        return static_argument_count(kind);
     }
 
-    static size_t kind_argument_count(FunctionKind kind) {
+    static size_t static_argument_count(FunctionKind kind) {
         switch (kind) {
             case FunctionKind::SUM:
             case FunctionKind::COUNT:
@@ -281,7 +270,7 @@ struct Function {
             default:
                 break;
         }
-        assert(false);
+        assert(0 && "Missing variant");
     }
 
     Expression* begin() {
@@ -289,6 +278,14 @@ struct Function {
     }
 
     Expression* end() {
+        return arguments.get() + argument_count();
+    }
+
+    const Expression* begin() const {
+        return arguments.get();
+    }
+
+    const Expression* end() const {
         return arguments.get() + argument_count();
     }
 };
@@ -318,6 +315,7 @@ class ExpressionBuilder: public CExprBuilder {
         return pop();
     }
 
+    // pops multiple values from the stack and returns them
     std::unique_ptr<Expression[]> pop_multiple(size_t len) {
         assert_size(len);
 
@@ -336,8 +334,9 @@ class ExpressionBuilder: public CExprBuilder {
         stack.push_back(std::move(e));
     }
 
+    // pops number of arguments depending on FunctionKind and pushes a Function
     void push_function(FunctionKind kind) {
-        size_t count = Function::kind_argument_count(kind);
+        size_t count = Function::static_argument_count(kind);
         auto args = pop_multiple(count);
         push({Function(kind, std::move(args))});
     }
@@ -446,7 +445,7 @@ class ExpressionBuilder: public CExprBuilder {
         } else {
             throw std::invalid_argument("Unhandled function name");
         }
-        assert((size_t)paramCount == Function::kind_argument_count(kind));
+        assert((size_t)paramCount == Function::static_argument_count(kind));
         push_function(kind);
     }
 };
@@ -468,13 +467,8 @@ class Cell {
     }
 
     template<typename F>
-    void visit_expressions(F fun) {
-        Cell::visit_expression(expression, fun);
-    }
-
-    template<typename F>
     static void visit_expression(Expression& expr, F fun) {
-        Cell::on_variant<Function>(expr, [fun](Function& function) {
+        on_variant<Function>(expr, [fun](Function& function) {
             for (auto& arg : function) {
                 Cell::visit_expression(arg, fun);
             }
@@ -482,21 +476,43 @@ class Cell {
         fun(expr);
     }
 
+    template<typename F>
+    static void visit_expression(const Expression& expr, F fun) {
+        on_variant<Function>(expr, [fun](const Function& function) {
+            for (const auto& arg : function) {
+                Cell::visit_expression(arg, fun);
+            }
+        });
+        fun(expr);
+    }
+
+    // std::visit doesn't work and I don't know why
     template<typename T, typename F>
     static bool on_variant(Expression& expr, F fun) {
-        try {
+        if (std::holds_alternative<T>(expr)) {
             T& variant = std::get<T>(expr);
             fun(variant);
-
             return true;
-        } catch (std::bad_variant_access& ex) {
+        } else {
             return false;
         }
     }
 
+    template<typename T, typename F>
+    static bool on_variant(const Expression& expr, F fun) {
+        if (std::holds_alternative<T>(expr)) {
+            const T& variant = std::get<T>(expr);
+            fun(variant);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    // call closure for all cell references in expression
     template<typename F>
     void on_cell_references(F fun) {
-        this->visit_expressions([fun](Expression& expr) {
+        Cell::visit_expression(expression, [fun](Expression& expr) {
             Cell::on_variant<CellReference>(expr, [fun](auto& c) {
                 fun(c.pos);
             });
@@ -506,18 +522,16 @@ class Cell {
         });
     }
 
-    bool apply_offset(std::pair<int, int> offset) {
-        bool any_relative = false;
-        this->visit_expressions([&](Expression& expr) {
+    void apply_offset(std::pair<int, int> offset) {
+        Cell::visit_expression(expression, [&](Expression& expr) {
             Cell::on_variant<CellReference>(expr, [&](auto& c) {
-                any_relative |= c.apply_relative_offset(offset);
+                c.apply_relative_offset(offset);
             });
             Cell::on_variant<CellRange>(expr, [&](auto& c) {
-                any_relative |= c.start.apply_relative_offset(offset);
-                any_relative |= c.end.apply_relative_offset(offset);
+                c.start.apply_relative_offset(offset);
+                c.end.apply_relative_offset(offset);
             });
         });
-        return any_relative;
     }
 
     friend class CSpreadsheet;
@@ -604,8 +618,7 @@ class StreamWriter {
     }
 
     void write_expression(const Expression& expr) {
-        auto& unconst = const_cast<Expression&>(expr);
-        Cell::visit_expression(unconst, [&](Expression& expr) {
+        Cell::visit_expression(expr, [&](const Expression& expr) {
             _inner_write_expression(expr);
         });
         write_i8(-1);
@@ -767,7 +780,7 @@ class FnvHasher {
 class CSpreadsheet {
     std::map<CPos, Cell> cells;
     std::set<std::pair<CPos, CPos>> edges;
-    std::set<CPos> cell_call_stack;
+    std::set<CPos> call_stack;
 
   public:
     CSpreadsheet() {}
@@ -864,8 +877,9 @@ class CSpreadsheet {
         edges.insert(std::make_pair(from, to));
     }
 
+    // mark the pos and all cells that depend on it as dirty
     void mark_dirty(CPos pos) {
-        auto entry = cell_call_stack.insert(pos);
+        auto entry = call_stack.insert(pos);
 
         if (!entry.second) {
             return;
@@ -889,7 +903,7 @@ class CSpreadsheet {
             }
         }
 
-        cell_call_stack.erase(entry.first);
+        call_stack.erase(entry.first);
     }
 
     bool setCell_internal(CPos pos, Cell cell) {
@@ -929,7 +943,8 @@ class CSpreadsheet {
         }
     }
 
-    CValue reduce_range(
+    // fold a lambda over a cell range, undefined
+    CValue fold_range(
         CellRange range,
         double initial,
         void (*fun)(double* acc, double input)
@@ -943,6 +958,7 @@ class CSpreadsheet {
                 fun(&acc, std::get<double>(value));
             }
         });
+
         if (empty) {
             return UNDEFINED;
         } else {
@@ -950,6 +966,7 @@ class CSpreadsheet {
         }
     }
 
+    // call lambda on two number arguments, otherwise return undefined
     CValue numeric_binary_operator(
         const Function& function,
         double (*fun)(double a, double b)
@@ -1015,7 +1032,7 @@ class CSpreadsheet {
                 switch (fun.kind) {
                     case FunctionKind::SUM: {
                         CellRange range = std::get<CellRange>(fun.arguments[0]);
-                        return reduce_range(
+                        return fold_range(
                             range,
                             0.0,
                             [](double* acc, double in) { *acc += in; }
@@ -1055,7 +1072,7 @@ class CSpreadsheet {
                     }
                     case FunctionKind::MIN: {
                         CellRange range = std::get<CellRange>(fun.arguments[0]);
-                        return reduce_range(
+                        return fold_range(
                             range,
                             std::numeric_limits<double>::infinity(),
                             [](double* acc, double in) {
@@ -1065,7 +1082,7 @@ class CSpreadsheet {
                     }
                     case FunctionKind::MAX: {
                         CellRange range = std::get<CellRange>(fun.arguments[0]);
-                        return reduce_range(
+                        return fold_range(
                             range,
                             -std::numeric_limits<double>::infinity(),
                             [](double* acc, double in) {
@@ -1208,6 +1225,7 @@ class CSpreadsheet {
         }
     }
 
+    // getValue but returns a reference
     const CValue& getValue_internal(CPos pos) {
         static const CValue STATIC_UNDEFINED = CValue {};
 
@@ -1217,7 +1235,7 @@ class CSpreadsheet {
         }
 
         if (cell->dirty) {
-            auto previous = cell_call_stack.insert(pos);
+            auto previous = call_stack.insert(pos);
 
             if (!previous.second) {
                 return STATIC_UNDEFINED;
@@ -1226,14 +1244,14 @@ class CSpreadsheet {
             cell->cached_value = evaluate_expression(cell->expression);
             cell->dirty = false;
 
-            cell_call_stack.erase(pos);
+            call_stack.erase(pos);
         }
 
         return cell->cached_value;
     }
 
     CValue getValue(CPos pos) {
-        assert(cell_call_stack.empty());
+        assert(call_stack.empty());
         return getValue_internal(pos);
     }
 
@@ -1248,10 +1266,7 @@ class CSpreadsheet {
         } else {
             Cell copy = entry->second;
             auto offset = CPos::make_relative_offset(src, dst);
-            // mark dirty if cell contained any relative cell references
-            if (copy.apply_offset(offset)) {
-                copy.dirty = true;
-            }
+            copy.apply_offset(offset);
 
             setCell_internal(dst, std::move(copy));
         }
@@ -1266,9 +1281,10 @@ class CSpreadsheet {
         }
 
         int x_start = src.x;
-        int x_end = src.x + w - 1;
+        int x_end = src.x + w - 1;  // end inclusive
         int x_d = 1;
 
+        // the copy ranges may overlap so we need to reverse the copy direction
         if (dst.x > src.x) {
             std::swap(x_start, x_end);
             x_d = -1;
